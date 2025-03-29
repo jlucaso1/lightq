@@ -11,11 +11,14 @@
     "bun",
     "deno"
   ],
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": false,
   "publishConfig": {
     "access": "public"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "module": "src/index.ts",
   "scripts": {
