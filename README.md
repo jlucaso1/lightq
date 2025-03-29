@@ -29,13 +29,13 @@ reliability and ease of use, leveraging atomic Redis operations via Lua scripts.
 
 ```bash
 # Using npm
-npm install lightq
+npm install @jlucaso/lightq
 
 # Using yarn
-yarn add lightq
+yarn add @jlucaso/lightq
 
 # Using Bun
-bun add lightq
+bun add @jlucaso/lightq
 ```
 
 **Prerequisite:** Requires a running Redis server (version 4.0 or later
