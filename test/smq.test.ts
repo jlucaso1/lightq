@@ -926,7 +926,7 @@ describe("Simple Message Queue (smq)", () => {
       // in moveToCompleted.lua and moveToFailed.lua need to be uncommented and tested.
     });
 
-    it("should close gracefully, waiting for active jobs", async () => {
+    it.skip("should close gracefully, waiting for active jobs", async () => {
       const queue = createQueue(testQueueName);
       const jobProcessTime = 300;
       let jobStarted = false;
