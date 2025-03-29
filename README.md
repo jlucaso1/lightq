@@ -1,5 +1,6 @@
 # LightQ ✨
-
+[![codecov](https://codecov.io/gh/jlucaso1/lightq/graph/badge.svg)](https://codecov.io/gh/jlucaso1/lightq)
+[![NPM Version](https://img.shields.io/npm/v/@jlucaso%2Flightq.svg)](https://www.npmjs.com/package/@jlucaso/lightq)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A simple, lightweight, Redis-backed job queue library designed for TypeScript

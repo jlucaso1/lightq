@@ -3,8 +3,14 @@ name: Run Tests & Coverage
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    paths: # Run on push only if these files/folders change
+      - 'src/**'
+      - 'test/**'
+      - 'package.json'
+      - 'bun.lockb'
+      - 'tsconfig.json'
+      - 'scripts/build.ts'
+      - '.github/workflows/test.yml'
 
 jobs:
   test:
