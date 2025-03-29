@@ -2,15 +2,13 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "bull",
+      "name": "lightq",
       "dependencies": {
         "ioredis": "^5.6.0",
       },
       "devDependencies": {
         "@types/bun": "latest",
         "@types/node": "^22.13.14",
-      },
-      "peerDependencies": {
         "typescript": "^5",
       },
     },
