@@ -1,4 +1,5 @@
-import { Job, Queue, Worker } from "../src";
+import { Job, Queue, Worker } from "../dist";
+import process from "node:process";
 
 // 1. Configure Redis Connection
 const redisConnectionOpts = {
@@ -45,7 +46,7 @@ async function addEmails() {
       subject: "Special Offer!",
       body: "Check out our new deals.",
     },
-    { delay: 5000 } // Send this job after a 5-second delay
+    { delay: 5000 }, // Send this job after a 5-second delay
   );
 
   console.log("Jobs added.");
@@ -75,7 +76,7 @@ const emailWorker = new Worker<EmailJobData, EmailJobResult>(
   {
     connection: redisConnectionOpts,
     concurrency: 5, // Process up to 5 emails concurrently
-  }
+  },
 );
 
 // 5. Listen to Worker Events (Optional)
@@ -85,7 +86,7 @@ emailWorker.on("completed", (job, result) => {
 
 emailWorker.on("failed", (job, error) => {
   console.error(
-    `Job ${job?.id} failed after ${job?.attemptsMade} attempts with error: ${error.message}`
+    `Job ${job?.id} failed after ${job?.attemptsMade} attempts with error: ${error.message}`,
   );
 });
 

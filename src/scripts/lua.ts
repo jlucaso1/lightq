@@ -1,31 +1,11 @@
 import type { JobData, RedisClient } from "../interfaces";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import { Pipeline } from "ioredis";
 import { Job } from "../classes/job";
 import type { QueueKeys } from "../utils";
-
-function loadScriptContent(scriptName: string): string {
-  const scriptPath = path.join(import.meta.dirname, `${scriptName}.lua`);
-  try {
-    return fs.readFileSync(scriptPath, "utf-8");
-  } catch (err) {
-    console.error(`Error loading Lua script ${scriptName}:`, err);
-    throw new Error(`Could not load script ${scriptName}`);
-  }
-}
+import { loadLuaScriptContent } from "../macros/loadLuaScript.ts" with { type: "macro" };
 
 export class LuaScripts {
   private client: RedisClient;
-  static readonly commands = [
-    "addJob",
-    "moveToActive",
-    "moveToCompleted",
-    "moveToFailed",
-    "retryJob",
-    "moveDelayedToWait",
-    "extendLock",
-  ] as const;
 
   constructor(client: RedisClient) {
     this.client = client;
@@ -33,35 +13,45 @@ export class LuaScripts {
   }
 
   private loadScripts() {
-    LuaScripts.commands.forEach((name) => {
-      const scriptContent = loadScriptContent(name);
-      let numberOfKeys: number;
-      switch (name) {
-        case "addJob":
-          numberOfKeys = 3;
-          break;
-        case "moveToActive":
-          numberOfKeys = 3;
-          break;
-        case "moveToCompleted":
-          numberOfKeys = 3;
-          break;
-        case "moveToFailed":
-          numberOfKeys = 3;
-          break;
-        case "retryJob":
-          numberOfKeys = 4;
-          break;
-        case "moveDelayedToWait":
-          numberOfKeys = 2;
-          break;
-        case "extendLock":
-          numberOfKeys = 1;
-          break;
-        default:
-          throw new Error(`Unknown script or missing key count: ${name}`);
-      }
-      this.client.defineCommand(name, { numberOfKeys, lua: scriptContent });
+    this.client.defineCommand("addJob", {
+      numberOfKeys: 3,
+      lua: loadLuaScriptContent("addJob"),
+    });
+
+    // moveToActive
+    this.client.defineCommand("moveToActive", {
+      numberOfKeys: 3,
+      lua: loadLuaScriptContent("moveToActive"),
+    });
+
+    // moveToCompleted
+    this.client.defineCommand("moveToCompleted", {
+      numberOfKeys: 3,
+      lua: loadLuaScriptContent("moveToCompleted"),
+    });
+
+    // moveToFailed
+    this.client.defineCommand("moveToFailed", {
+      numberOfKeys: 3,
+      lua: loadLuaScriptContent("moveToFailed"),
+    });
+
+    // retryJob
+    this.client.defineCommand("retryJob", {
+      numberOfKeys: 4,
+      lua: loadLuaScriptContent("retryJob"),
+    });
+
+    // moveDelayedToWait
+    this.client.defineCommand("moveDelayedToWait", {
+      numberOfKeys: 2,
+      lua: loadLuaScriptContent("moveDelayedToWait"),
+    });
+
+    // extendLock
+    this.client.defineCommand("extendLock", {
+      numberOfKeys: 1,
+      lua: loadLuaScriptContent("extendLock"),
     });
   }
 
