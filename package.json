@@ -11,7 +11,7 @@
     "bun",
     "deno"
   ],
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": false,
   "publishConfig": {
     "access": "public"
@@ -37,6 +37,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/node": "^22.13.14",
+    "luamin": "^1.0.4",
     "typescript": "^5"
   },
   "dependencies": {

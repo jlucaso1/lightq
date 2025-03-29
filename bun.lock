@@ -9,6 +9,7 @@
       "devDependencies": {
         "@types/bun": "latest",
         "@types/node": "^22.13.14",
+        "luamin": "^1.0.4",
         "typescript": "^5",
       },
     },
@@ -35,6 +36,10 @@
     "lodash.defaults": ["lodash.defaults@4.2.0", "", {}, "sha512-qjxPLHd3r5DnsdGacqOMU6pb/avJzdh9tFX2ymgoZE27BmjXrNy/y4LoaiTeAb+O3gL8AfpJGtqfX/ae2leYYQ=="],
 
     "lodash.isarguments": ["lodash.isarguments@3.1.0", "", {}, "sha512-chi4NHZlZqZD18a0imDHnZPrDeBbTtVN7GXMwuGdRH9qotxAjYs3aVLKc7zNOG9eddR5Ksd8rvFEBc9SsggPpg=="],
+
+    "luamin": ["luamin@1.0.4", "", { "dependencies": { "luaparse": "^0.2.1" }, "bin": { "luamin": "bin/luamin" } }, "sha512-z1h0bclRD/QGsS/Dz4Skp9z0qPTmmm+IKcrCapGmdTczPWVdN9f9jk6WqkNrcifQr8+n9Pzsm9WkwpOH1JBUAQ=="],
+
+    "luaparse": ["luaparse@0.2.1", "", { "bin": { "luaparse": "./bin/luaparse" } }, "sha512-VKBcryd5nJte4ZNR29NOk8F/UkMipjeb4yoxcSS51z6QAzg9DXUC2WsfLniS0J1eh3pr/ZL3e9ha6V8fhoLbBQ=="],
 
     "ms": ["ms@2.1.3", "", {}, "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA=="],
 

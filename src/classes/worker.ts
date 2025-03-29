@@ -219,9 +219,7 @@ export class Worker<
     const maxAttempts = opts.attempts ?? 1;
 
     // Emit failed *before* attempting state change, so listeners know about the processor error
-    console.error(
-      `Job ${job.id} failed attempt ${job.attemptsMade}/${maxAttempts} with error: ${err.message}`,
-    );
+
     this.emit("failed", job, err);
 
     let moveSuccessful = false; // Track if Redis move succeeds
