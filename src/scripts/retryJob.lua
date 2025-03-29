@@ -1,8 +1,9 @@
 --[[
-  Moves a job from failed set back to wait or delayed (for backoff).
+  Moves a job from active list back to wait or delayed (for retry/backoff).
+  Cleans up lock and state fields from the job hash.
 
   Input:
-    KEYS[1] failedKey
+    KEYS[1] activeKey
     KEYS[2] delayedKey
     KEYS[3] waitKey
     KEYS[4] jobsPrefix
@@ -16,9 +17,10 @@
   Output:
      0: Success
     -1: Job not found in failed set
-    -2: Job hash data missing (consistency issue)
+    -2: Job hash data missing
+    -3: Job not found in active list
 ]]
-local failedKey = KEYS[1]
+local activeKey = KEYS[1]
 local delayedKey = KEYS[2]
 local waitKey = KEYS[3]
 local jobsPrefix = KEYS[4]
@@ -31,20 +33,21 @@ local newStacktraceJson = ARGV[5] -- Potentially store retry stack? Keep origina
 
 local jobKey = jobsPrefix .. ':' .. jobId
 
--- 1. Remove from Failed set
-local removedCount = redis.call("ZREM", failedKey, jobId)
-if removedCount == 0 then
-  return -1 -- Job not in failed set
-end
-
 -- 2. Check if job data exists
 if redis.call("EXISTS", jobKey) == 0 then
     return -2 -- Job data is missing, cannot retry
 end
 
+-- 1. Remove from Active list
+-- Use count -1 to remove only the last matching element (consistent with RPOPLPUSH)
+local removedCount = redis.call("LREM", activeKey, -1, jobId)
+if removedCount == 0 then
+    return -3 -- Job not found in active list
+end
+
 -- 3. Update Job Data: Increment attempts, clear finish/fail state
 redis.call("HINCRBY", jobKey, "attemptsMade", 1)
-redis.call("HDEL", jobKey, "finishedOn", "failedReason", "stacktrace", "processedOn")
+redis.call("HDEL", jobKey, "finishedOn", "failedReason", "stacktrace", "processedOn", "lockToken", "lockedUntil")
 -- Optionally update reason/stacktrace if ARGV[4]/[5] are provided
 
 -- 4. Move to Wait or Delayed

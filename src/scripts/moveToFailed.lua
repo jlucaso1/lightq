@@ -12,6 +12,7 @@
     ARGV[4] removeOptionString ('true', 'false', or max count number as string)
     ARGV[5] now (timestamp ms)
     ARGV[6] lockToken
+    ARGV[7] finalAttemptsMade (the count *after* the last attempt)
 
   Output:
      0: Success
@@ -28,6 +29,8 @@ local stacktraceJson = ARGV[3]
 local removeOption = ARGV[4]
 local now = tonumber(ARGV[5])
 local lockToken = ARGV[6]
+local attemptsMade = tonumber(ARGV[7])
+
 
 local jobKey = jobsPrefix .. ':' .. jobId
 
@@ -52,7 +55,8 @@ else
   redis.call("HMSET", jobKey,
     "failedReason", failedReason,
     "stacktrace", stacktraceJson,
-    "finishedOn", now
+    "finishedOn", now,
+    "attemptsMade", attemptsMade
     -- Keep attemptsMade
   )
   redis.call("HDEL", jobKey, "lockToken", "lockedUntil", "processedOn")
