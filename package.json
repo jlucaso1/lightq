@@ -1,0 +1,16 @@
+{
+  "name": "bull",
+  "module": "src/index.ts",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.13.14"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "ioredis": "^5.6.0"
+  }
+}
