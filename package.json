@@ -1,5 +1,5 @@
 {
-  "name": "bull",
+  "name": "lightq",
   "module": "src/index.ts",
   "devDependencies": {
     "@types/bun": "latest",
