@@ -161,16 +161,52 @@ export class Worker<
   private async processJob(job: Job<TData, TResult, TName>): Promise<void> {
     try {
       const result = await this.processor(job);
-      await this.scripts.moveToCompleted(
+
+      // *** FIX START: Check moveToCompleted result ***
+      // Check if the job is still considered active by this worker before moving
+      // This helps prevent attempting to complete a job whose lock was lost (and cleaned up)
+      if (!this.jobsInFlight.has(job.id)) {
+        console.warn(
+          `Job ${job.id} processing finished, but it was no longer tracked as active (lock likely lost). Skipping move to completed.`,
+        );
+        return; // Exit early, cleanup already happened or will happen
+      }
+
+      const moveResult = await this.scripts.moveToCompleted(
         this.keys,
         job,
         result,
         this.opts.removeOnComplete ?? false,
       );
-      this.emit("completed", job, result);
-      this.cleanupJob(job.id);
+      if (moveResult === 0) {
+        // Successfully moved
+        this.emit("completed", job, result);
+        this.cleanupJob(job.id); // Cleanup only after successful move
+      } else {
+        // Failed to move (e.g., lock mismatch - code -1, or not in active list - code -2)
+        console.error(
+          `Failed to move job ${job.id} to completed state (Redis script code: ${moveResult}). Lock may have been lost or job state inconsistent.`,
+        );
+        // Even if move fails, we need to clean up the job locally
+        this.cleanupJob(job.id);
+        // Optionally emit a different event like 'error' or 'stalled' here?
+        this.emit(
+          "error",
+          new Error(
+            `Failed to move job ${job.id} to completed (Script Code: ${moveResult})`,
+          ),
+          job,
+        );
+      }
     } catch (err) {
-      this.handleJobError(job, err as Error);
+      // Check if job is still valid before handling error
+      if (!this.jobsInFlight.has(job.id)) {
+        console.warn(
+          `Job ${job.id} processing failed, but it was no longer tracked as active (lock likely lost). Skipping move to failed/retry.`,
+        );
+        return; // Exit early
+      }
+      this.handleJobError(job, err as Error); // handleJobError will call cleanupJob
     }
   }
 
@@ -182,36 +218,72 @@ export class Worker<
     const opts = job.opts;
     const maxAttempts = opts.attempts ?? 1;
 
-    console.error(`Job ${job.id} failed with error: ${err.message}`);
+    // Emit failed *before* attempting state change, so listeners know about the processor error
+    console.error(
+      `Job ${job.id} failed attempt ${job.attemptsMade}/${maxAttempts} with error: ${err.message}`,
+    );
     this.emit("failed", job, err);
 
-    if (job.attemptsMade < maxAttempts) {
-      // Calculate backoff
-      let backoffDelay = 0;
-      if (opts.backoff) {
-        if (typeof opts.backoff === "number") {
-          backoffDelay = opts.backoff;
-        } else if (opts.backoff.type === "fixed") {
-          backoffDelay = opts.backoff.delay;
-        } else if (opts.backoff.type === "exponential") {
-          backoffDelay = Math.round(
-            opts.backoff.delay * Math.pow(2, job.attemptsMade - 1),
+    let moveSuccessful = false; // Track if Redis move succeeds
+
+    try {
+      if (job.attemptsMade < maxAttempts) {
+        // Calculate backoff
+        let backoffDelay = 0;
+        if (opts.backoff) {
+          if (typeof opts.backoff === "number") {
+            backoffDelay = opts.backoff;
+          } else if (opts.backoff.type === "fixed") {
+            backoffDelay = opts.backoff.delay;
+          } else if (opts.backoff.type === "exponential") {
+            backoffDelay = Math.round(
+              opts.backoff.delay * Math.pow(2, job.attemptsMade - 1),
+            );
+          }
+        }
+        // Retry: Move to delayed
+        const retryResult = await this.scripts.retryJob(
+          this.keys,
+          job,
+          backoffDelay,
+          err,
+        );
+        if (retryResult === 0) {
+          this.emit("retrying", job, err);
+          moveSuccessful = true;
+        } else {
+          console.error(
+            `Failed to move job ${job.id} for retry (Redis script code: ${retryResult}).`,
+          );
+          // Don't emit retrying if move failed
+        }
+      } else {
+        // Final failure: Move to failed
+        const failedResult = await this.scripts.moveToFailed(
+          this.keys,
+          job,
+          err,
+          this.opts.removeOnFail ?? false,
+        );
+        if (failedResult === 0) {
+          // Optionally emit a 'finallyFailed' event here if needed?
+          moveSuccessful = true;
+        } else {
+          console.error(
+            `Failed to move job ${job.id} to final failed state (Redis script code: ${failedResult}).`,
           );
         }
       }
-      // Retry: Move to delayed
-      await this.scripts.retryJob(this.keys, job, backoffDelay, err);
-      this.emit("retrying", job, err);
-    } else {
-      // Final failure: Move to failed
-      await this.scripts.moveToFailed(
-        this.keys,
-        job,
-        err,
-        this.opts.removeOnFail ?? false,
+    } catch (redisError) {
+      console.error(
+        `Redis error during job failure handling for job ${job.id}:`,
+        redisError,
       );
+      // Emit worker error?
+      this.emit("error", redisError as Error, job);
+    } finally {
+      this.cleanupJob(job.id, err); // Pass error for context
     }
-    this.cleanupJob(job.id, err); // Pass error for context
   }
 
   private startLockRenewal(job: Job<TData, TResult, TName>): void {
@@ -277,14 +349,22 @@ export class Worker<
         // Wait for the main loop to potentially finish its current iteration
         if (this.mainLoopPromise) {
           try {
-            await this.mainLoopPromise;
+            // Give the main loop a brief moment to exit if it's in a delay/wait
+            await Promise.race([this.mainLoopPromise, delay(force ? 50 : 500)]);
           } catch (e) {
             /* Ignore errors during close */
+            console.warn("Error ignored during main loop shutdown:", e);
           }
         }
+        this.mainLoopPromise = null; // Ensure we don't await it again
 
         if (!force) {
           await this.waitForJobsToComplete();
+        } else {
+          console.log(
+            `Force closing: Skipping wait for ${this.jobsInFlight.size} jobs.`,
+          );
+          // Optionally try to release locks for jobsInFlight? Risky during force close.
         }
 
         // Clear all pending lock renewals
@@ -292,18 +372,41 @@ export class Worker<
         this.lockRenewTimers.clear();
 
         try {
-          await Promise.all([
-            this.client.quit(),
-            this.bClient.quit(), // Close blocking client too
-          ]);
-        } catch (err) {
-          if ((err as Error).message !== "Connection is closed.") {
-            console.error("Error during Redis quit:", err);
-            // Force disconnect if quit fails
+          // *** FIX START: Use disconnect() on force close ***
+          if (force) {
+            console.log("Force closing Redis connections using disconnect().");
+            // Disconnect immediately without waiting for server ACK
             this.client.disconnect();
             this.bClient.disconnect();
+          } else {
+            // Attempt graceful shutdown
+            await Promise.all([
+              this.client.quit(),
+              this.bClient.quit(), // Close blocking client too
+            ]);
+          }
+          // *** FIX END ***
+        } catch (err) {
+          // Ignore "Connection is closed" error which is expected if already closed/disconnected
+          if (
+            (err as Error).message &&
+            !(err as Error).message.includes("Connection is closed")
+          ) {
+            console.error("Error during Redis connection close:", err);
+            // Force disconnect if quit/disconnect failed unexpectedly
+            try {
+              this.client.disconnect();
+            } catch {
+              /* ignore */
+            }
+            try {
+              this.bClient.disconnect();
+            } catch {
+              /* ignore */
+            }
           }
         }
+        this.jobsInFlight.clear(); // Ensure jobsInFlight is cleared on close
         this.emit("closed");
       })();
     }

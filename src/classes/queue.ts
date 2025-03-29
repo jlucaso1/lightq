@@ -175,7 +175,7 @@ export class Queue<
     pipeline?: Pipeline,
   ): Promise<any> {
     const command = pipeline || this.client;
-    // @ts-ignore - Assume script methods exist after loading
-    return command[scriptName](keys.length, ...keys, ...args);
+
+    return (command as any)[scriptName]?.(...keys, ...args);
   }
 }

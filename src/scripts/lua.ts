@@ -68,7 +68,7 @@ export class LuaScripts {
   async addJob(
     keys: QueueKeys,
     jobData: JobData<any>,
-    pipeline?: Pipeline
+    pipeline?: Pipeline,
   ): Promise<string> {
     const command = pipeline || this.client;
     const optsJson = JSON.stringify(jobData.opts);
@@ -90,7 +90,7 @@ export class LuaScripts {
   async moveToActive(
     keys: QueueKeys,
     lockToken: string,
-    lockDuration: number
+    lockDuration: number,
   ): Promise<[string, Record<string, string>] | null> {
     const now = Date.now();
     const args = [lockToken, lockDuration.toString(), now.toString()];
@@ -99,7 +99,7 @@ export class LuaScripts {
       keys.wait,
       keys.active,
       keys.jobs,
-      ...args
+      ...args,
     );
     if (result) {
       const jobId = result[0];
@@ -117,13 +117,12 @@ export class LuaScripts {
     keys: QueueKeys,
     job: Job<any, any, any>,
     returnValue: any,
-    removeOnComplete: boolean | number
+    removeOnComplete: boolean | number,
   ): Promise<number> {
     const now = Date.now();
-    const removeOption =
-      typeof removeOnComplete === "number"
-        ? removeOnComplete.toString()
-        : String(removeOnComplete);
+    const removeOption = typeof removeOnComplete === "number"
+      ? removeOnComplete.toString()
+      : String(removeOnComplete);
     const rvJson = JSON.stringify(returnValue ?? null);
     const args = [job.id, rvJson, removeOption, now.toString(), job.lockToken!];
     // @ts-ignore
@@ -131,7 +130,7 @@ export class LuaScripts {
       keys.active,
       keys.completed,
       keys.jobs,
-      ...args
+      ...args,
     );
   }
 
@@ -139,16 +138,15 @@ export class LuaScripts {
     keys: QueueKeys,
     job: Job<any, any, any>,
     error: Error,
-    removeOnFail: boolean | number
+    removeOnFail: boolean | number,
   ): Promise<number> {
     const now = Date.now();
-    const removeOption =
-      typeof removeOnFail === "number"
-        ? removeOnFail.toString()
-        : String(removeOnFail);
+    const removeOption = typeof removeOnFail === "number"
+      ? removeOnFail.toString()
+      : String(removeOnFail);
     const failedReason = error.message || "Unknown error";
     const stacktrace = JSON.stringify(
-      error.stack?.split("\n").slice(0, 20) ?? []
+      error.stack?.split("\n").slice(0, 20) ?? [],
     );
     const finalAttemptsMade = job.attemptsMade;
     const args = [
@@ -165,7 +163,7 @@ export class LuaScripts {
       keys.active,
       keys.failed,
       keys.jobs,
-      ...args
+      ...args,
     );
   }
 
@@ -173,12 +171,12 @@ export class LuaScripts {
     keys: QueueKeys,
     job: Job<any, any, any>,
     delay: number,
-    error: Error
+    error: Error,
   ): Promise<number> {
     const now = Date.now();
     const failedReason = error.message || "Retry Error";
     const stacktrace = JSON.stringify(
-      error.stack?.split("\n").slice(0, 20) ?? []
+      error.stack?.split("\n").slice(0, 20) ?? [],
     );
     const args = [
       job.id,
@@ -193,14 +191,14 @@ export class LuaScripts {
       keys.delayed,
       keys.wait,
       keys.jobs,
-      ...args
+      ...args,
     );
   }
 
   async moveDelayedToWait(
     keys: QueueKeys,
     timestamp: number,
-    limit: number = 50
+    limit: number = 50,
   ): Promise<number> {
     const args = [timestamp.toString(), limit.toString()];
     // @ts-ignore
@@ -211,7 +209,7 @@ export class LuaScripts {
     keys: QueueKeys,
     jobId: string,
     token: string,
-    duration: number
+    duration: number,
   ): Promise<number> {
     // jobsPrefix is not needed directly, jobKey is constructed in Lua
     // const jobKey = `${keys.jobs}:${jobId}`; // Constructing jobKey here is not needed for the call
