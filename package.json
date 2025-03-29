@@ -1,5 +1,5 @@
 {
-  "name": "lightq",
+  "name": "@jlucaso/lightq",
   "description": "LightQ is a simple and fast queue system for Node Bun and Deno, built with TypeScript and Redis. It provides a lightweight solution for managing background jobs and tasks in your applications.",
   "keywords": [
     "queue",
@@ -13,6 +13,9 @@
   ],
   "version": "0.0.1",
   "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "module": "src/index.ts",
   "scripts": {
