@@ -13,9 +13,6 @@ export function loadLuaScriptContent(scriptName: string): string {
     import.meta.dirname,
     `../scripts/lua/${scriptName}.lua`,
   );
-  console.log(
-    `[Macro] Loading Lua script '${scriptName}' from path: ${scriptPath}`,
-  );
 
   try {
     // Read the file synchronously to get the content

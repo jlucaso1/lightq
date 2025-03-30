@@ -817,7 +817,7 @@ describe("LightQ (lightq)", () => {
     it("should initialize with default and overridden options", () => {
       expect(scheduler).toBeInstanceOf(JobScheduler);
       // @ts-ignore
-      expect(scheduler.opts.prefix).toBe("lightq"); // Inherited from queue options
+      expect(scheduler.prefix).toBe("lightq");
       // @ts-ignore
       expect(scheduler.opts.schedulerPrefix).toBe("testprefix");
       // @ts-ignore
@@ -1400,7 +1400,7 @@ describe("LightQ (lightq)", () => {
         const schedulerId = "fail-add-job";
         const jobTemplate: JobTemplate = { name: "wont-add" };
         const addError = new Error("Queue is full");
-        const checkInterval = scheduler["opts"].checkInterval;
+        const checkInterval = scheduler["opts"].checkInterval || 200;
         const recoveryNextRun = now + checkInterval; // Expected recovery time
 
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId]);

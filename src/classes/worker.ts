@@ -1,14 +1,9 @@
-import { EventEmitter } from "node:events";
 import { Job } from "./job";
 import type { RedisClient, WorkerOptions } from "../interfaces";
-import {
-  createRedisClient,
-  delay,
-  getQueueKeys,
-  type QueueKeys,
-} from "../utils";
+import { delay, getQueueKeys, type QueueKeys } from "../utils";
 import { LuaScripts } from "../scripts/lua";
 import { randomUUID } from "node:crypto";
+import { RedisService } from "./base-service";
 
 export type Processor<
   TData = any,
@@ -20,48 +15,35 @@ export class Worker<
   TData = any,
   TResult = any,
   TName extends string = string,
-> extends EventEmitter {
+> extends RedisService<WorkerOptions> {
   readonly name: string;
-  readonly client: RedisClient;
   readonly bClient: RedisClient; // Blocking client
-  readonly opts: WorkerOptions;
   readonly keys: QueueKeys;
   private scripts: LuaScripts;
   private processor: Processor<TData, TResult, TName>;
-  private prefix: string;
 
   private running = false;
-  private closing: Promise<void> | null = null;
   private paused = false;
   private jobsInFlight = new Map<string, Job<TData, TResult, TName>>(); // Track active jobs
   private lockRenewTimers = new Map<string, NodeJS.Timeout>();
   private mainLoopPromise: Promise<void> | null = null;
   private workerId = randomUUID(); // Unique ID for this worker instance
+  private activeJobPromises = new Set<Promise<any>>();
 
   constructor(
     name: string,
     processor: Processor<TData, TResult, TName>,
     opts: WorkerOptions,
   ) {
-    super();
+    super(opts);
     this.name = name;
-    this.opts = {
-      concurrency: 1,
-      lockDuration: 30000,
-      lockRenewTime: 15000,
-      ...opts,
-    };
-    this.prefix = opts.prefix ?? "lightq";
+    this.processor = processor;
     this.keys = getQueueKeys(this.prefix, this.name);
 
-    this.client = createRedisClient(opts.connection);
     this.bClient = this.client.duplicate();
-
-    this.scripts = new LuaScripts(this.client); // Scripts use the normal client
-    this.processor = processor;
-
-    this.client.on("error", (err) => this.emit("error", err));
     this.bClient.on("error", (err) => this.emit("error", err)); // Listen to blocking client errors too
+
+    this.scripts = new LuaScripts(this.client);
 
     this.run(); // Autorun by default (can be made optional)
   }
@@ -80,12 +62,15 @@ export class Worker<
         try {
           const job = await this.acquireNextJob();
           if (job) {
-            // Process concurrently but don't await here directly
-            this.processJob(job).catch((err) => {
-              console.error(`Unhandled error processing job ${job.id}:`, err);
-              // Ensure cleanup even on unhandled promise rejection
-              this.cleanupJob(job.id, err);
-            });
+            const processingPromise = this.processJob(job)
+              .catch((err) => {
+                console.error(`Unhandled error processing job ${job.id}:`, err);
+              })
+              .finally(() => {
+                this.activeJobPromises.delete(processingPromise);
+              });
+
+            this.activeJobPromises.add(processingPromise);
           } else {
             // No job found, wait a bit before retrying to avoid busy-looping
             await delay(1000); // Configurable delay?
@@ -97,17 +82,15 @@ export class Worker<
           ) {
             this.emit("error", err as Error);
             // Wait before retrying after an error
-            await delay(5000);
+            if (!this.closing) await delay(5000);
           }
         }
       } else {
         // At concurrency limit, wait a bit
-        await delay(200); // Small delay to yield
+        if (!this.closing) await delay(200);
       }
     }
     this.running = false;
-    // Ensure cleanup if loop exits unexpectedly
-    await this.waitForJobsToComplete();
   }
 
   private async acquireNextJob(): Promise<Job<TData, TResult, TName> | null> {
@@ -335,88 +318,62 @@ export class Worker<
     // Potentially emit a specific 'jobCleaned' or 'jobFinishedProcessing' event
   }
 
-  private async waitForJobsToComplete(): Promise<void> {
-    const finishingPromises: Promise<any>[] = [];
-    // NOTE: This is a simplified wait. In reality, you might need
-    // a more robust mechanism, perhaps tracking promises directly.
-    // This assumes that when `processJob` completes (or errors),
-    // the job is eventually removed from jobsInFlight.
-    while (this.jobsInFlight.size > 0) {
-      console.log(`Waiting for ${this.jobsInFlight.size} jobs to complete...`);
-      await delay(500); // Check periodically
+  protected async _internalClose(force = false): Promise<void> {
+    this.running = false; // Signal loops to stop
+
+    // Stop accepting new jobs immediately by setting paused?
+    this.paused = true;
+
+    // Wait for the main loop promise to potentially finish its current cycle
+    if (this.mainLoopPromise) {
+      try {
+        await Promise.race([this.mainLoopPromise, delay(force ? 50 : 500)]);
+      } catch (e) {
+        /* Ignore errors during close */
+      }
     }
-  }
+    this.mainLoopPromise = null;
 
-  async close(force = false): Promise<void> {
-    if (!this.closing) {
-      this.closing = (async () => {
-        this.emit("closing");
-        this.running = false; // Signal loops to stop
+    if (!force) {
+      const promisesToWaitFor = [...this.activeJobPromises];
+      if (promisesToWaitFor.length > 0) {
+        console.log(
+          `Waiting for ${promisesToWaitFor.length} active job promises to settle...`,
+        );
+        await Promise.allSettled(promisesToWaitFor);
+        console.log("Active job promises settled.");
+      }
+    } else {
+      console.log(
+        `Force closing worker: Skipping wait for ${this.jobsInFlight.size} jobs.`,
+      );
 
-        // Wait for the main loop to potentially finish its current iteration
-        if (this.mainLoopPromise) {
-          try {
-            // Give the main loop a brief moment to exit if it's in a delay/wait
-            await Promise.race([this.mainLoopPromise, delay(force ? 50 : 500)]);
-          } catch (e) {
-            /* Ignore errors during close */
-            console.warn("Error ignored during main loop shutdown:", e);
-          }
-        }
-        this.mainLoopPromise = null; // Ensure we don't await it again
-
-        if (!force) {
-          await this.waitForJobsToComplete();
-        } else {
-          console.log(
-            `Force closing: Skipping wait for ${this.jobsInFlight.size} jobs.`,
-          );
-          // Optionally try to release locks for jobsInFlight? Risky during force close.
-        }
-
-        // Clear all pending lock renewals
-        this.lockRenewTimers.forEach((timer) => clearTimeout(timer));
-        this.lockRenewTimers.clear();
-
-        try {
-          // *** FIX START: Use disconnect() on force close ***
-          if (force) {
-            console.log("Force closing Redis connections using disconnect().");
-            // Disconnect immediately without waiting for server ACK
-            this.client.disconnect();
-            this.bClient.disconnect();
-          } else {
-            // Attempt graceful shutdown
-            await Promise.all([
-              this.client.quit(),
-              this.bClient.quit(), // Close blocking client too
-            ]);
-          }
-          // *** FIX END ***
-        } catch (err) {
-          // Ignore "Connection is closed" error which is expected if already closed/disconnected
-          if (
-            (err as Error).message &&
-            !(err as Error).message.includes("Connection is closed")
-          ) {
-            console.error("Error during Redis connection close:", err);
-            // Force disconnect if quit/disconnect failed unexpectedly
-            try {
-              this.client.disconnect();
-            } catch {
-              /* ignore */
-            }
-            try {
-              this.bClient.disconnect();
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        this.jobsInFlight.clear(); // Ensure jobsInFlight is cleared on close
-        this.emit("closed");
-      })();
+      this.activeJobPromises.clear();
     }
-    return this.closing;
+
+    // Clear timers and tracking maps
+    this.lockRenewTimers.forEach((timer) => clearTimeout(timer));
+    this.lockRenewTimers.clear();
+    this.jobsInFlight.clear();
+    this.activeJobPromises.clear();
+
+    // Close the blocking client connection
+    try {
+      if (force) {
+        this.bClient.disconnect();
+      } else if (["connect", "ready"].includes(this.bClient.status)) {
+        await this.bClient.quit();
+      } else {
+        this.bClient.disconnect();
+      }
+    } catch (err) {
+      if (
+        (err as Error).message &&
+        !(err as Error).message.includes("Connection is closed")
+      ) {
+        console.error("Error closing blocking Redis connection:", err);
+        this.bClient.disconnect(); // Force disconnect on error
+      }
+    }
   }
 }

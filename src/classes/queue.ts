@@ -1,42 +1,34 @@
-import { EventEmitter } from "node:events";
 import type {
   JobData,
   JobOptions,
   JobSchedulerOptions,
   JobTemplate,
   QueueOptions,
-  RedisClient,
   SchedulerRepeatOptions,
 } from "../interfaces";
-import { createRedisClient, getQueueKeys, type QueueKeys } from "../utils";
+import { getQueueKeys, type QueueKeys } from "../utils";
 import { LuaScripts } from "../scripts/lua";
 import { randomUUID } from "node:crypto";
 import { Job } from "./job";
 import { Pipeline } from "ioredis";
 import { Buffer } from "node:buffer";
 import { JobScheduler } from "./scheduler";
+import { RedisService } from "./base-service";
 
 export class Queue<
   TData = any,
   TResult = any,
   TName extends string = string,
-> extends EventEmitter {
+> extends RedisService<QueueOptions> {
   readonly name: string;
-  readonly client: RedisClient;
-  readonly opts: QueueOptions;
   readonly keys: QueueKeys;
   private scripts: LuaScripts;
-  private closing: Promise<void> | null = null;
-  private prefix: string;
   private scheduler: JobScheduler | null = null;
   private schedulerOpts: JobSchedulerOptions | null = null;
 
   constructor(name: string, opts: QueueOptions) {
-    super();
+    super(opts);
     this.name = name;
-    this.opts = opts;
-    this.prefix = opts.prefix ?? "lightq";
-    this.client = createRedisClient(opts.connection);
     this.keys = getQueueKeys(this.prefix, this.name);
     this.scripts = new LuaScripts(this.client);
 
@@ -49,9 +41,6 @@ export class Queue<
       // Allow overriding checkInterval via QueueOptions potentially?
       // checkInterval: (opts as any).schedulerCheckInterval ?? 5000,
     };
-
-    this.client.on("error", (err) => this.emit("error", err));
-    this.client.on("ready", () => this.emit("ready"));
   }
 
   async add(
@@ -186,35 +175,10 @@ export class Queue<
     };
   }
 
-  async close(): Promise<void> {
-    if (!this.closing) {
-      this.closing = (async () => {
-        // --- Close scheduler first ---
-        if (this.scheduler) {
-          await this.scheduler.close();
-        }
-        // --- End Add ---
-        try {
-          // Now close the queue's client (potentially shared)
-          // Check if client is still connected before quitting
-          if (
-            this.client &&
-            ["connect", "ready"].includes(this.client.status)
-          ) {
-            await this.client.quit();
-          } else {
-            // If not connected or already closing/closed, just disconnect locally
-            this.client?.disconnect();
-          }
-        } catch (err) {
-          if ((err as Error).message !== "Connection is closed.") {
-            console.error("Error during Redis quit:", err);
-            this.client.disconnect(); // Force disconnect on error
-          }
-        }
-      })();
+  protected async _internalClose(force = false): Promise<void> {
+    if (this.scheduler) {
+      await this.scheduler.close(force);
     }
-    return this.closing;
   }
 
   async executeScript(

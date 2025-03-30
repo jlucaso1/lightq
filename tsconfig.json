@@ -28,6 +28,5 @@
     "noPropertyAccessFromIndexSignature": false,
     "stripInternal": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["src/macros/loadLuaScript.ts"]
+  "include": ["src/**/*"]
 }
