@@ -45,3 +45,47 @@ export interface JobData<T = any> {
   lockedUntil?: number;
   lockToken?: string;
 }
+
+export type SchedulerRepeatOptions =
+  | {
+    /** Cron pattern (e.g., '0 * * * *') */
+    pattern: string;
+    /** Optional timezone for cron pattern */
+    tz?: string;
+    /** Not used with pattern */
+    every?: never;
+  }
+  | {
+    /** Repeat interval in milliseconds */
+    every: number;
+    /** Not used with every */
+    pattern?: never;
+    tz?: never;
+  };
+
+/** Template for jobs created by a scheduler */
+export interface JobTemplate<TData = any, TName extends string = string> {
+  name: TName;
+  data?: TData;
+  opts?: Omit<JobOptions, "jobId" | "delay">; // Cannot set jobId or delay on scheduled jobs
+}
+
+/** Internal representation of scheduler data stored in Redis */
+export interface SchedulerData extends JobTemplate {
+  id: string;
+  type: "cron" | "every";
+  value: string | number; // Cron pattern or 'every' ms
+  tz?: string;
+  nextRun: number; // Timestamp (ms)
+  lastRun?: number; // Timestamp (ms)
+  // lockUntil?: number; // Potential future addition for distributed locking
+}
+
+/** Options for the JobScheduler instance */
+export interface JobSchedulerOptions extends QueueOptions {
+  // Reuse QueueOptions for connection
+  /** How often the scheduler checks for due jobs (milliseconds) */
+  checkInterval?: number;
+  /** Prefix for scheduler-specific keys */
+  schedulerPrefix?: string;
+}

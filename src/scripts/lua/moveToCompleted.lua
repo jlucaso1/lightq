@@ -58,10 +58,11 @@ else
   redis.call("ZADD", completedKey, now, jobId)
 
   -- Optional: Trim completed set (implement if needed)
-  -- local keepCount = tonumber(removeOption)
-  -- if keepCount and keepCount > 0 then
-  --   redis.call("ZREMRANGEBYRANK", completedKey, 0, -(keepCount + 1))
-  -- end
+  local keepCount = tonumber(removeOption)
+
+  if keepCount and keepCount > 0 then
+    redis.call("ZREMRANGEBYRANK", completedKey, 0, -(keepCount + 1))
+  end
 end
 
 -- TODO: Emit 'completed' event via Pub/Sub if needed

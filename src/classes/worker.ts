@@ -51,7 +51,7 @@ export class Worker<
       lockRenewTime: 15000,
       ...opts,
     };
-    this.prefix = opts.prefix ?? "smq";
+    this.prefix = opts.prefix ?? "lightq";
     this.keys = getQueueKeys(this.prefix, this.name);
 
     this.client = createRedisClient(opts.connection);
@@ -172,11 +172,16 @@ export class Worker<
         return; // Exit early, cleanup already happened or will happen
       }
 
+      const removeOpt = job.opts.removeOnComplete ??
+        this.opts.removeOnComplete ??
+        (this as any)._queue?.opts?.defaultJobOptions?.removeOnComplete ??
+        false;
+
       const moveResult = await this.scripts.moveToCompleted(
         this.keys,
         job,
         result,
-        this.opts.removeOnComplete ?? false,
+        removeOpt ?? false,
       );
       if (moveResult === 0) {
         // Successfully moved
@@ -256,12 +261,16 @@ export class Worker<
           // Don't emit retrying if move failed
         }
       } else {
+        const removeOnFail = job.opts.removeOnFail ??
+          this.opts.removeOnFail ??
+          (this as any)._queue?.opts?.defaultJobOptions?.removeOnFail ??
+          false;
         // Final failure: Move to failed
         const failedResult = await this.scripts.moveToFailed(
           this.keys,
           job,
           err,
-          this.opts.removeOnFail ?? false,
+          removeOnFail ?? false,
         );
         if (failedResult === 0) {
           // Optionally emit a 'finallyFailed' event here if needed?

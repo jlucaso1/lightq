@@ -2,9 +2,9 @@
   Adds a job to the wait or delayed list and creates its data hash.
 
   Input:
-    KEYS[1] jobsPrefix (e.g., smq:myqueue:jobs)
-    KEYS[2] waitKey    (e.g., smq:myqueue:wait)
-    KEYS[3] delayedKey (e.g., smq:myqueue:delayed)
+    KEYS[1] jobsPrefix (e.g., lightq:myqueue:jobs)
+    KEYS[2] waitKey    (e.g., lightq:myqueue:wait)
+    KEYS[3] delayedKey (e.g., lightq:myqueue:delayed)
 
     ARGV[1] jobId
     ARGV[2] name
