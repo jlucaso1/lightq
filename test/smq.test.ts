@@ -41,7 +41,7 @@ const delay = (ms: number): Promise<void> =>
 async function waitFor(
   conditionFn: () => Promise<boolean> | boolean,
   timeout = 5000,
-  interval = 100
+  interval = 100,
 ): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
@@ -68,10 +68,10 @@ describe("LightQ (lightq)", () => {
   const createQueue = <
     TData = any,
     TResult = any,
-    TName extends string = string
+    TName extends string = string,
   >(
     name: string,
-    opts: Partial<Queue<TData, TResult, TName>["opts"]> = {}
+    opts: Partial<Queue<TData, TResult, TName>["opts"]> = {},
   ): Queue<TData, TResult, TName> => {
     const queue = new Queue<TData, TResult, TName>(name, {
       connection: { ...redisConnectionOpts }, // Use a fresh connection object potentially
@@ -83,7 +83,7 @@ describe("LightQ (lightq)", () => {
 
   const createScheduler = (
     queue: Queue<any, any, any>,
-    opts: Partial<JobScheduler["opts"]> = {}
+    opts: Partial<JobScheduler["opts"]> = {},
   ): JobScheduler => {
     // Use the internal getScheduler method for consistency if possible,
     // otherwise instantiate directly for isolated tests.
@@ -102,11 +102,11 @@ describe("LightQ (lightq)", () => {
   const createWorker = <
     TData = any,
     TResult = any,
-    TName extends string = string
+    TName extends string = string,
   >(
     name: string,
     processor: Processor<TData, TResult, TName>,
-    opts: Partial<Worker<TData, TResult, TName>["opts"]> = {}
+    opts: Partial<Worker<TData, TResult, TName>["opts"]> = {},
   ): Worker<TData, TResult, TName> => {
     const worker = new Worker<TData, TResult, TName>(name, processor, {
       connection: { ...redisConnectionOpts }, // Use a fresh connection object potentially
@@ -147,12 +147,11 @@ describe("LightQ (lightq)", () => {
           .close()
           .catch((e) =>
             console.error(
-              `Error closing scheduler for queue ${
-                (s as any).queue.name // Access private queue ref
-              }: ${e.message}`
+              `Error closing scheduler for queue ${(s as any).queue.name // Access private queue ref
+              }: ${e.message}`,
             )
           )
-      )
+      ),
     );
     // Close all created queues and workers
     await Promise.all([
@@ -309,7 +308,7 @@ describe("LightQ (lightq)", () => {
 
       expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
       expect(consoleWarnSpy).toHaveBeenCalledWith(
-        "updateProgress not fully implemented in this simple version"
+        "updateProgress not fully implemented in this simple version",
       );
 
       // Optional: Check if HSET was attempted (it shouldn't ideally if not impl)
@@ -371,7 +370,7 @@ describe("LightQ (lightq)", () => {
       const movedCount = await queue.scripts.moveDelayedToWait(
         keys,
         Date.now(),
-        10
+        10,
       );
 
       expect(movedCount).toBe(1);
@@ -435,7 +434,7 @@ describe("LightQ (lightq)", () => {
         {
           attempts: 2,
           removeOnComplete: false,
-        }
+        },
       );
 
       expect(job.opts.attempts).toBe(2);
@@ -468,7 +467,7 @@ describe("LightQ (lightq)", () => {
       await queue.close();
       // Try adding after close - should throw
       await expect(queue.add("job-after-close", { d: 2 })).rejects.toThrow(
-        "Queue is closing"
+        "Queue is closing",
       );
       // Check connection status (ioredis specific)
       // expect(queue.client.status).toBe("end");
@@ -535,14 +534,14 @@ describe("LightQ (lightq)", () => {
 
       // Try adding after close - should throw
       await expect(
-        sharedQueue.add("job-after-close", { d: 2 })
+        sharedQueue.add("job-after-close", { d: 2 }),
       ).rejects.toThrow("Queue is closing");
 
       // Remove from list so afterEach doesn't try to close again
       // (Handled by pushing onto queuesToClose and the afterEach loop)
       queuesToClose = queuesToClose.filter((q) => q !== sharedQueue);
       queuesToClose = queuesToClose.filter(
-        (q) => q.client !== connectionStatusClient
+        (q) => q.client !== connectionStatusClient,
       ); // Remove the status checker too
       await connectionStatusClient.quit().catch(() => {}); // Ensure checker client is closed
     });
@@ -631,7 +630,7 @@ describe("LightQ (lightq)", () => {
         // Spy on the actual JobScheduler method
         const schedulerUpsertSpy = spyOn(
           JobScheduler.prototype,
-          "upsertJobScheduler"
+          "upsertJobScheduler",
         ).mockResolvedValue(undefined); // Mock the underlying implementation
 
         await queue.upsertJobScheduler(schedulerId, repeat, template);
@@ -642,7 +641,7 @@ describe("LightQ (lightq)", () => {
         expect(schedulerUpsertSpy).toHaveBeenCalledWith(
           schedulerId,
           repeat,
-          template
+          template,
         );
 
         schedulerUpsertSpy.mockRestore();
@@ -657,7 +656,7 @@ describe("LightQ (lightq)", () => {
         const schedulerInstance = queue.getScheduler();
         const schedulerRemoveSpy = spyOn(
           schedulerInstance,
-          "removeJobScheduler"
+          "removeJobScheduler",
         ).mockResolvedValue(true);
 
         const result = await queue.removeJobScheduler(schedulerId);
@@ -682,8 +681,8 @@ describe("LightQ (lightq)", () => {
         expect(result).toBe(false);
         expect(consoleWarnSpy).toHaveBeenCalledWith(
           expect.stringContaining(
-            "Attempted to remove scheduler before scheduler process was started"
-          )
+            "Attempted to remove scheduler before scheduler process was started",
+          ),
         );
         // @ts-ignore - Verify scheduler is still not initialized
         expect(queue.scheduler).toBeNull();
@@ -739,16 +738,16 @@ describe("LightQ (lightq)", () => {
         const badJobId = "scheduler:my-id";
 
         await expect(
-          queue.add("some-job", { d: 1 }, { jobId: badJobId })
+          queue.add("some-job", { d: 1 }, { jobId: badJobId }),
         ).rejects.toThrow(
-          `Cannot manually add job with reserved scheduler ID: ${badJobId}`
+          `Cannot manually add job with reserved scheduler ID: ${badJobId}`,
         );
 
         // Test bulk add as well
         await expect(
           queue.addBulk([
             { name: "other-job", data: { d: 2 }, opts: { jobId: badJobId } },
-          ])
+          ]),
         ).resolves.toEqual([]); // Should skip the job and return empty array
 
         const counts = await queue.getJobCounts();
@@ -791,7 +790,7 @@ describe("LightQ (lightq)", () => {
       delSpy = spyOn(mockClient, "del").mockResolvedValue(1);
       zremSpy = spyOn(mockClient, "zrem").mockResolvedValue(1);
       zrangebyscoreSpy = spyOn(mockClient, "zrangebyscore").mockResolvedValue(
-        []
+        [],
       ); // Default: no jobs due
       hgetallSpy = spyOn(mockClient, "hgetall").mockResolvedValue({}); // Default: not found
       // Mock multi/exec chain
@@ -846,7 +845,8 @@ describe("LightQ (lightq)", () => {
 
         await scheduler.upsertJobScheduler(schedulerId, repeat, template);
 
-        const expectedKey = `testprefix:${queue.name}:schedulers:${schedulerId}`;
+        const expectedKey =
+          `testprefix:${queue.name}:schedulers:${schedulerId}`;
         const expectedData = {
           id: schedulerId,
           type: "cron",
@@ -863,12 +863,12 @@ describe("LightQ (lightq)", () => {
         const pipelineInstance = multiSpy.mock.results[0].value;
         expect(pipelineInstance.hset).toHaveBeenCalledWith(
           expectedKey,
-          expectedData
+          expectedData,
         );
         expect(pipelineInstance.zadd).toHaveBeenCalledWith(
           scheduler["keys"].index, // Access private key
           expectedNextRun,
-          schedulerId
+          schedulerId,
         );
         expect(execSpy).toHaveBeenCalledTimes(1);
       });
@@ -887,7 +887,8 @@ describe("LightQ (lightq)", () => {
 
         await scheduler.upsertJobScheduler(schedulerId, repeat, template);
 
-        const expectedKey = `testprefix:${queue.name}:schedulers:${schedulerId}`;
+        const expectedKey =
+          `testprefix:${queue.name}:schedulers:${schedulerId}`;
         const expectedData = {
           id: schedulerId,
           type: "every",
@@ -904,12 +905,12 @@ describe("LightQ (lightq)", () => {
         // Use expect.objectContaining because the actual call might have more keys initially
         expect(pipelineInstance.hset).toHaveBeenCalledWith(
           expectedKey,
-          expect.objectContaining(expectedData)
+          expect.objectContaining(expectedData),
         );
         expect(pipelineInstance.zadd).toHaveBeenCalledWith(
           scheduler["keys"].index,
           expectedNextRun,
-          schedulerId
+          schedulerId,
         );
         expect(execSpy).toHaveBeenCalledTimes(1);
       });
@@ -936,7 +937,7 @@ describe("LightQ (lightq)", () => {
         await scheduler.upsertJobScheduler(
           schedulerId,
           initialRepeat,
-          initialTemplate
+          initialTemplate,
         );
         multiSpy.mockClear(); // Clear mocks for the second call
         execSpy.mockClear();
@@ -945,10 +946,11 @@ describe("LightQ (lightq)", () => {
         await scheduler.upsertJobScheduler(
           schedulerId,
           updatedRepeat,
-          updatedTemplate
+          updatedTemplate,
         );
 
-        const expectedKey = `testprefix:${queue.name}:schedulers:${schedulerId}`;
+        const expectedKey =
+          `testprefix:${queue.name}:schedulers:${schedulerId}`;
         const expectedData = {
           id: schedulerId,
           type: "cron",
@@ -964,12 +966,12 @@ describe("LightQ (lightq)", () => {
         const pipelineInstance = multiSpy.mock.results[0].value;
         expect(pipelineInstance.hset).toHaveBeenCalledWith(
           expectedKey,
-          expect.objectContaining(expectedData)
+          expect.objectContaining(expectedData),
         );
         expect(pipelineInstance.zadd).toHaveBeenCalledWith(
           scheduler["keys"].index,
           expectedNextRun,
-          schedulerId
+          schedulerId,
         );
         expect(execSpy).toHaveBeenCalledTimes(1);
       });
@@ -978,35 +980,35 @@ describe("LightQ (lightq)", () => {
         const schedulerId = "invalid-repeat";
         await expect(
           // @ts-ignore - Testing invalid input
-          scheduler.upsertJobScheduler(schedulerId, {}, { name: "test" })
+          scheduler.upsertJobScheduler(schedulerId, {}, { name: "test" }),
         ).rejects.toThrow("Invalid repeat options");
         await expect(
           scheduler.upsertJobScheduler(
             schedulerId,
             // @ts-ignore
             { pattern: 123 },
-            { name: "test" }
-          )
+            { name: "test" },
+          ),
         ).rejects.toThrow("Invalid cron pattern");
         await expect(
           scheduler.upsertJobScheduler(
             schedulerId,
             { every: -100 },
-            { name: "test" }
-          )
+            { name: "test" },
+          ),
         ).rejects.toThrow("Invalid 'every' value");
         await expect(
           scheduler.upsertJobScheduler(
             schedulerId,
             { pattern: "invalid cron pattern" },
-            { name: "test" }
-          )
+            { name: "test" },
+          ),
         ).rejects.toThrow(/^Invalid cron pattern:/);
       });
 
       it("should throw error for empty scheduler ID", async () => {
         await expect(
-          scheduler.upsertJobScheduler("", { every: 1000 }, { name: "test" })
+          scheduler.upsertJobScheduler("", { every: 1000 }, { name: "test" }),
         ).rejects.toThrow("Scheduler ID cannot be empty");
       });
 
@@ -1020,8 +1022,8 @@ describe("LightQ (lightq)", () => {
           scheduler.upsertJobScheduler(
             schedulerId,
             { every: 1000 },
-            { name: "fail" }
-          )
+            { name: "fail" },
+          ),
         ).rejects.toThrowError(/Redis unavailable/);
 
         emitSpy.mockRestore();
@@ -1041,14 +1043,15 @@ describe("LightQ (lightq)", () => {
         const result = await scheduler.removeJobScheduler(schedulerId);
 
         expect(result).toBe(true);
-        const expectedKey = `testprefix:${queue.name}:schedulers:${schedulerId}`;
+        const expectedKey =
+          `testprefix:${queue.name}:schedulers:${schedulerId}`;
 
         expect(multiSpy).toHaveBeenCalledTimes(1);
         const pipelineInstance = multiSpy.mock.results[0].value;
         expect(pipelineInstance.del).toHaveBeenCalledWith(expectedKey);
         expect(pipelineInstance.zrem).toHaveBeenCalledWith(
           scheduler["keys"].index,
-          schedulerId
+          schedulerId,
         );
         expect(execSpy).toHaveBeenCalledTimes(1);
       });
@@ -1081,7 +1084,7 @@ describe("LightQ (lightq)", () => {
         const emitSpy = spyOn(scheduler, "emit");
 
         await expect(
-          scheduler.removeJobScheduler(schedulerId)
+          scheduler.removeJobScheduler(schedulerId),
         ).rejects.toThrowError(/Redis unavailable/);
 
         emitSpy.mockRestore();
@@ -1093,7 +1096,7 @@ describe("LightQ (lightq)", () => {
         await delay(5); // Give closing a moment to start
 
         await expect(scheduler.removeJobScheduler(schedulerId)).resolves.toBe(
-          false
+          false,
         ); // Should not throw but return false or warn
 
         await closePromise; // Wait for close to complete
@@ -1104,7 +1107,7 @@ describe("LightQ (lightq)", () => {
       it("should start the scheduler and schedule the first check", async () => {
         const setTimeoutSpy = spyOn(global, "setTimeout").mockImplementation(
           // @ts-ignore
-          () => {}
+          () => {},
         );
 
         scheduler.start();
@@ -1115,7 +1118,7 @@ describe("LightQ (lightq)", () => {
         expect(setTimeoutSpy).toHaveBeenCalledWith(
           expect.any(Function),
           // @ts-ignore
-          scheduler.opts.checkInterval
+          scheduler.opts.checkInterval,
         );
 
         setTimeoutSpy.mockRestore();
@@ -1253,10 +1256,11 @@ describe("LightQ (lightq)", () => {
             jobId: undefined,
             delay: undefined,
             // Other options might be merged, check core ones
-          })
+          }),
         );
         // Check Redis update for Job 1
-        const expectedKey1 = `testprefix:${queue.name}:schedulers:${schedulerId1}`;
+        const expectedKey1 =
+          `testprefix:${queue.name}:schedulers:${schedulerId1}`;
         const expectedNextRun1 = now + repeat1.every!;
         // Ensure multi/exec was called twice (once per job)
         expect(multiSpy).toHaveBeenCalledTimes(2);
@@ -1269,12 +1273,12 @@ describe("LightQ (lightq)", () => {
           "nextRun",
           expectedNextRun1.toString(),
           "lastRun",
-          now.toString()
+          now.toString(),
         );
         expect(pipelineInstance1.zadd).toHaveBeenCalledWith(
           scheduler["keys"].index,
           expectedNextRun1,
-          schedulerId1
+          schedulerId1,
         );
 
         // --- Assertions for Job 2 (cron) ---
@@ -1285,22 +1289,23 @@ describe("LightQ (lightq)", () => {
             attempts: 5, // From template opts
             jobId: undefined,
             delay: undefined,
-          })
+          }),
         );
         // Check Redis update for Job 2
-        const expectedKey2 = `testprefix:${queue.name}:schedulers:${schedulerId2}`;
+        const expectedKey2 =
+          `testprefix:${queue.name}:schedulers:${schedulerId2}`;
         const pipelineInstance2 = multiSpy.mock.results[1].value;
         expect(pipelineInstance2.hset).toHaveBeenCalledWith(
           expectedKey2,
           "nextRun",
           nextRun2.toString(),
           "lastRun",
-          now.toString()
+          now.toString(),
         );
         expect(pipelineInstance2.zadd).toHaveBeenCalledWith(
           scheduler["keys"].index,
           nextRun2,
-          schedulerId2
+          schedulerId2,
         );
       });
 
@@ -1337,14 +1342,14 @@ describe("LightQ (lightq)", () => {
         // Mock scheduler stopping after the first job is processed
         const processSpy = spyOn(
           scheduler as any,
-          "_processSingleScheduler"
+          "_processSingleScheduler",
         ).mockImplementation(async (id) => {
           if (id === schedulerId1) {
             // Process first job normally (calls mocked add, multi, exec)
             await JobScheduler.prototype["_processSingleScheduler"].call(
               scheduler,
               id,
-              now
+              now,
             ); // Call original logic
             // Now simulate stop
             scheduler.stop(); // Stop the scheduler
@@ -1379,11 +1384,11 @@ describe("LightQ (lightq)", () => {
         await scheduler._checkAndProcessDueJobs();
 
         expect(hgetallSpy).toHaveBeenCalledWith(
-          `testprefix:${queue.name}:schedulers:${schedulerId}`
+          `testprefix:${queue.name}:schedulers:${schedulerId}`,
         );
         expect(zremSpy).toHaveBeenCalledWith(
           scheduler["keys"].index,
-          schedulerId
+          schedulerId,
         );
         expect(queueAddSpy).not.toHaveBeenCalled();
         expect(multiSpy).not.toHaveBeenCalled(); // No update attempts
@@ -1428,16 +1433,17 @@ describe("LightQ (lightq)", () => {
 
         // Check the recovery HSET and ZADD
         const pipelineInstance = multiSpy.mock.results[0].value;
-        const expectedKey = `testprefix:${queue.name}:schedulers:${schedulerId}`;
+        const expectedKey =
+          `testprefix:${queue.name}:schedulers:${schedulerId}`;
         expect(pipelineInstance.hset).toHaveBeenCalledWith(
           expectedKey,
           "nextRun",
-          recoveryNextRun.toString()
+          recoveryNextRun.toString(),
         );
         expect(pipelineInstance.zadd).toHaveBeenCalledWith(
           scheduler["keys"].index,
           recoveryNextRun,
-          schedulerId
+          schedulerId,
         );
         expect(execSpy).toHaveBeenCalledTimes(1);
 
@@ -1484,10 +1490,12 @@ describe("LightQ (lightq)", () => {
         expect(execSpy).toHaveBeenCalledTimes(1); // Recovery exec failed
         expect(zremSpy).toHaveBeenCalledWith(
           scheduler["keys"].index,
-          schedulerId
+          schedulerId,
         ); // Cleanup ZREM
         expect(consoleErrorSpy).toHaveBeenCalledWith(
-          expect.stringContaining(`Removed scheduler ${schedulerId} from index`)
+          expect.stringContaining(
+            `Removed scheduler ${schedulerId} from index`,
+          ),
         );
 
         consoleErrorSpy.mockRestore();
@@ -1524,7 +1532,7 @@ describe("LightQ (lightq)", () => {
           scheduler["keys"].index,
           "NX", // Ensure NX flag is used
           futureNextRun,
-          schedulerId
+          schedulerId,
         );
         expect(queueAddSpy).not.toHaveBeenCalled(); // Should not add the job
         expect(multiSpy).not.toHaveBeenCalled(); // Should not try to update state via multi
@@ -1609,8 +1617,8 @@ describe("LightQ (lightq)", () => {
         expect(emitSpy).toHaveBeenCalledWith(
           "error",
           expect.stringContaining(
-            "Error parsing scheduler data from Redis: SyntaxError: JSON Parse error"
-          )
+            "Error parsing scheduler data from Redis: SyntaxError: JSON Parse error",
+          ),
         );
 
         emitSpy.mockRestore();
@@ -1689,7 +1697,7 @@ describe("LightQ (lightq)", () => {
   describe("Worker Class", () => {
     it("should process a job successfully", async () => {
       const queue = createQueue<{ input: number }, { output: number }>(
-        testQueueName
+        testQueueName,
       );
       const jobData = { input: 5 };
       const expectedResult = { output: 10 };
@@ -1822,7 +1830,7 @@ describe("LightQ (lightq)", () => {
         {
           attempts: maxAttempts,
           backoff: { type: "fixed", delay: backoffDelay },
-        }
+        },
       );
 
       await failedPromise;
@@ -1831,8 +1839,8 @@ describe("LightQ (lightq)", () => {
 
       // Check approximate delay between attempts
       for (let i = 1; i < maxAttempts; i++) {
-        const diff =
-          processorCallTimestamps[i]! - processorCallTimestamps[i - 1]!;
+        const diff = processorCallTimestamps[i]! -
+          processorCallTimestamps[i - 1]!;
         // Allow significant tolerance for test runner / event loop delays
         expect(diff).toBeGreaterThanOrEqual(backoffDelay - 20); // Lower bound
         expect(diff).toBeLessThan(backoffDelay + 500); // Upper bound (generous)
@@ -1870,7 +1878,7 @@ describe("LightQ (lightq)", () => {
         {
           attempts: maxAttempts,
           backoff: { type: "exponential", delay: initialDelay },
-        }
+        },
       );
 
       await failedPromise;
@@ -1923,7 +1931,7 @@ describe("LightQ (lightq)", () => {
               }
               resolve(); // Resolve on any completion for simplicity now
             });
-          })
+          }),
       );
 
       const allJobsCompleted = new Promise<void>((res) => {
@@ -1942,7 +1950,7 @@ describe("LightQ (lightq)", () => {
 
       await waitFor(
         async () => (await queue.getJobCounts()).completed === jobCount,
-        5000
+        5000,
       );
       await allJobsCompleted; // Wait for all jobs to complete
 
@@ -1964,7 +1972,7 @@ describe("LightQ (lightq)", () => {
         },
         {
           removeOnComplete: true,
-        }
+        },
       );
       const job = await queue.add("complete-remove", { d: 1 });
 
@@ -1995,7 +2003,7 @@ describe("LightQ (lightq)", () => {
         {
           removeOnFail: true,
           concurrency: 1,
-        }
+        },
       );
       const job = await queue.add("fail-remove", { d: 1 }, { attempts: 1 }); // Only 1 attempt
 
@@ -2023,7 +2031,7 @@ describe("LightQ (lightq)", () => {
         },
         {
           removeOnComplete: keepCount, // Keep only 2 completed jobs
-        }
+        },
       );
 
       let completedJobs = 0;
@@ -2067,7 +2075,7 @@ describe("LightQ (lightq)", () => {
           jobFinished = true;
           return "done";
         },
-        { concurrency: 1 }
+        { concurrency: 1 },
       );
 
       await queue.add("slow-job", { d: 1 });
@@ -2075,7 +2083,7 @@ describe("LightQ (lightq)", () => {
       // Wait for the job to become active
       await waitFor(
         async () => (await queue.getJobCounts()).active === 1,
-        1000
+        1000,
       );
       expect(jobStarted).toBe(true);
 
@@ -2124,7 +2132,7 @@ describe("LightQ (lightq)", () => {
         worker.on("error", (err) => {
           console.error(
             "Worker 'error' event fired unexpectedly in test:",
-            err
+            err,
           );
         });
       });
@@ -2203,7 +2211,7 @@ describe("LightQ (lightq)", () => {
       const addedJob = await queue.add(
         "retry-event-job",
         { d: 1 },
-        { attempts: maxAttempts, backoff: 10 }
+        { attempts: maxAttempts, backoff: 10 },
       );
 
       await waitFor(() => retryEventEmitted, 2000); // Wait for the retry event specifically
@@ -2231,7 +2239,7 @@ describe("LightQ (lightq)", () => {
           await delay(10);
           return "ok";
         },
-        { lockDuration: 10000 }
+        { lockDuration: 10000 },
       ); // Longer lock to avoid interference
 
       worker.on("movedDelayed", (count) => {
@@ -2241,7 +2249,7 @@ describe("LightQ (lightq)", () => {
       // Wait for the job to be processed, which implies the delayed job was moved
       await waitFor(
         async () => (await queue.getJobCounts()).completed === 1,
-        3000
+        3000,
       );
 
       // Check if the event fired. This might be slightly racy depending on timing.
@@ -2250,7 +2258,7 @@ describe("LightQ (lightq)", () => {
     });
 
     it("should stop processing *updates* and warn if lock renewal fails", async () => {
-      await delay(50)
+      await delay(50);
       const queue = createQueue(testQueueName);
       const lockDuration = 100; // Very short lock
       const lockRenewTime = 50; // Renew frequently
@@ -2270,7 +2278,7 @@ describe("LightQ (lightq)", () => {
           await redisClient.hset(
             `${queue.keys.jobs}:${job.id}`,
             "lockToken",
-            "invalid-token"
+            "invalid-token",
           );
           // Continue processing
           await delay(processTime);
@@ -2282,7 +2290,7 @@ describe("LightQ (lightq)", () => {
           concurrency: 1,
           lockDuration: lockDuration,
           lockRenewTime: lockRenewTime,
-        }
+        },
       );
 
       worker.on("completed", () => (jobCompletedEvent = true)); // Shouldn't fire
@@ -2340,11 +2348,11 @@ describe("LightQ (lightq)", () => {
           await redisClient.hset(
             `${queue.keys.jobs}:${job.id}`,
             "lockToken",
-            "different-token"
+            "different-token",
           );
           return "should-not-be-saved";
         },
-        { concurrency: 1 }
+        { concurrency: 1 },
       );
 
       worker.on("completed", () => (jobCompleted = true));
@@ -2385,7 +2393,7 @@ describe("LightQ (lightq)", () => {
           jobFinished = true;
           return "done";
         },
-        { concurrency: 1 }
+        { concurrency: 1 },
       );
 
       await queue.add("force-close-job", { d: 1 });
@@ -2393,7 +2401,7 @@ describe("LightQ (lightq)", () => {
       // Wait for the job to become active
       await waitFor(
         async () => (await queue.getJobCounts()).active === 1,
-        1000
+        1000,
       );
       expect(jobStarted).toBe(true);
 
@@ -2432,7 +2440,7 @@ describe("LightQ (lightq)", () => {
         await queueUtils.delay(jobProcessTime); // Use the original delay for processing
         return true;
       },
-      { concurrency }
+      { concurrency },
     );
 
     // Add jobs
@@ -2443,7 +2451,7 @@ describe("LightQ (lightq)", () => {
     // Wait for all jobs to complete
     await waitFor(
       async () => (await queue.getJobCounts()).completed === jobCount,
-      jobProcessTime * 2 + 500 // Adjust timeout if needed
+      jobProcessTime * 2 + 500, // Adjust timeout if needed
     );
 
     // Check if the specific delay(200) used for pausing was called
