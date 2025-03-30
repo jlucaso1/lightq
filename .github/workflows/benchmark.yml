@@ -1,0 +1,87 @@
+name: Run Benchmarks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "bench/**"
+      - ".github/workflows/benchmark.yml"
+
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "bench/**"
+      - ".github/workflows/benchmark.yml"
+
+  workflow_dispatch:
+
+# Optional: Cancel in-progress runs for the same PR/branch on new commits
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-benchmark:
+    runs-on: ubuntu-latest
+
+    # Service container for Redis
+    services:
+      redis:
+        image: redis:latest # Use a specific version if preferred e.g., redis:7.2
+        ports:
+          - 6379:6379 # Map container port 6379 to host port 6379
+        options: >- # Health check to ensure Redis is ready before tests/benchmarks start
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest # Or specify a specific Bun version
+
+      # Cache Bun dependencies for the bench directory
+      # Note: Adjust the path if your bench/bun.lockb is elsewhere or named differently
+      - name: Cache Bun Dependencies (Bench)
+        uses: actions/cache@v4
+        with:
+          path: bench/node_modules
+          key: ${{ runner.os }}-bun-bench-${{ hashFiles('bench/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-bench-
+
+      # Install redis-cli needed for the clean-redis script
+      - name: Install redis-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-tools
+        # You could potentially use the redis-cli from the service container too,
+        # but installing it on the runner is often simpler for scripting.
+
+      - name: Install Dependencies (Bench)
+        run: bun install --frozen-lockfile # Use frozen lockfile for reproducibility
+        working-directory: ./bench # Run command inside the bench directory
+
+      - name: Clear Redis Database
+        run: bun run clean-redis
+        working-directory: ./bench # Run command inside the bench directory
+        env:
+          # Make Redis service accessible to redis-cli
+          # The service is mapped to localhost on the runner host
+          REDIS_HOST: localhost # Or 127.0.0.1
+          REDIS_PORT: 6379      # Corresponds to the host port mapped in 'services'
+
+      - name: Run Benchmark
+        run: bun run bench
+        working-directory: ./bench # Run command inside the bench directory
+        env:
+          # Make Redis service accessible to the benchmark script
+          REDIS_HOST: localhost # Or 127.0.0.1
+          REDIS_PORT: 6379      # Corresponds to the host port mapped in 'services'
