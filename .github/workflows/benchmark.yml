@@ -62,7 +62,7 @@ jobs:
         working-directory: ./bench # Run command inside the bench directory
 
       - name: Run Benchmark
-        run: bun run bench
+        run: bun run benchmark.ts
         working-directory: ./bench # Run command inside the bench directory
         env:
           # Make Redis service accessible to the benchmark script
