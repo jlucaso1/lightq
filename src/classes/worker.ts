@@ -13,13 +13,13 @@ import { randomUUID } from "node:crypto";
 export type Processor<
   TData = any,
   TResult = any,
-  TName extends string = string,
+  TName extends string = string
 > = (job: Job<TData, TResult, TName>) => Promise<TResult>;
 
 export class Worker<
   TData = any,
   TResult = any,
-  TName extends string = string,
+  TName extends string = string
 > extends EventEmitter {
   readonly name: string;
   readonly client: RedisClient;
@@ -41,7 +41,7 @@ export class Worker<
   constructor(
     name: string,
     processor: Processor<TData, TResult, TName>,
-    opts: WorkerOptions,
+    opts: WorkerOptions
   ) {
     super();
     this.name = name;
@@ -51,7 +51,7 @@ export class Worker<
       lockRenewTime: 15000,
       ...opts,
     };
-    this.prefix = opts.prefix ?? "smq";
+    this.prefix = opts.prefix ?? "lightq";
     this.keys = getQueueKeys(this.prefix, this.name);
 
     this.client = createRedisClient(opts.connection);
@@ -119,7 +119,7 @@ export class Worker<
     const now = Date.now();
     const movedFromDelayed = await this.scripts.moveDelayedToWait(
       this.keys,
-      now,
+      now
     );
     if (movedFromDelayed > 0) {
       this.emit("movedDelayed", movedFromDelayed); // Maybe a local event?
@@ -131,7 +131,7 @@ export class Worker<
     const result = await this.scripts.moveToActive(
       this.keys,
       lockToken,
-      lockDuration,
+      lockDuration
     );
 
     if (result) {
@@ -142,7 +142,7 @@ export class Worker<
         const job = Job.fromRedisHash<TData, TResult, TName>(
           // Need a Queue-like object or pass necessary info
           { client: this.client, keys: this.keys, name: this.name } as any,
-          rawJobData,
+          rawJobData
         );
         job.lockToken = lockToken;
         job.lockedUntil = Date.now() + lockDuration;
@@ -167,16 +167,22 @@ export class Worker<
       // This helps prevent attempting to complete a job whose lock was lost (and cleaned up)
       if (!this.jobsInFlight.has(job.id)) {
         console.warn(
-          `Job ${job.id} processing finished, but it was no longer tracked as active (lock likely lost). Skipping move to completed.`,
+          `Job ${job.id} processing finished, but it was no longer tracked as active (lock likely lost). Skipping move to completed.`
         );
         return; // Exit early, cleanup already happened or will happen
       }
+
+      const removeOpt =
+        job.opts.removeOnComplete ??
+        this.opts.removeOnComplete ??
+        (this as any)._queue?.opts?.defaultJobOptions?.removeOnComplete ??
+        false;
 
       const moveResult = await this.scripts.moveToCompleted(
         this.keys,
         job,
         result,
-        this.opts.removeOnComplete ?? false,
+        removeOpt ?? false
       );
       if (moveResult === 0) {
         // Successfully moved
@@ -185,7 +191,7 @@ export class Worker<
       } else {
         // Failed to move (e.g., lock mismatch - code -1, or not in active list - code -2)
         console.error(
-          `Failed to move job ${job.id} to completed state (Redis script code: ${moveResult}). Lock may have been lost or job state inconsistent.`,
+          `Failed to move job ${job.id} to completed state (Redis script code: ${moveResult}). Lock may have been lost or job state inconsistent.`
         );
         // Even if move fails, we need to clean up the job locally
         this.cleanupJob(job.id);
@@ -193,16 +199,16 @@ export class Worker<
         this.emit(
           "error",
           new Error(
-            `Failed to move job ${job.id} to completed (Script Code: ${moveResult})`,
+            `Failed to move job ${job.id} to completed (Script Code: ${moveResult})`
           ),
-          job,
+          job
         );
       }
     } catch (err) {
       // Check if job is still valid before handling error
       if (!this.jobsInFlight.has(job.id)) {
         console.warn(
-          `Job ${job.id} processing failed, but it was no longer tracked as active (lock likely lost). Skipping move to failed/retry.`,
+          `Job ${job.id} processing failed, but it was no longer tracked as active (lock likely lost). Skipping move to failed/retry.`
         );
         return; // Exit early
       }
@@ -212,7 +218,7 @@ export class Worker<
 
   private async handleJobError(
     job: Job<TData, TResult, TName>,
-    err: Error,
+    err: Error
   ): Promise<void> {
     job.attemptsMade += 1;
     const opts = job.opts;
@@ -235,7 +241,7 @@ export class Worker<
             backoffDelay = opts.backoff.delay;
           } else if (opts.backoff.type === "exponential") {
             backoffDelay = Math.round(
-              opts.backoff.delay * Math.pow(2, job.attemptsMade - 1),
+              opts.backoff.delay * Math.pow(2, job.attemptsMade - 1)
             );
           }
         }
@@ -244,38 +250,43 @@ export class Worker<
           this.keys,
           job,
           backoffDelay,
-          err,
+          err
         );
         if (retryResult === 0) {
           this.emit("retrying", job, err);
           moveSuccessful = true;
         } else {
           console.error(
-            `Failed to move job ${job.id} for retry (Redis script code: ${retryResult}).`,
+            `Failed to move job ${job.id} for retry (Redis script code: ${retryResult}).`
           );
           // Don't emit retrying if move failed
         }
       } else {
+        const removeOnFail =
+          job.opts.removeOnFail ??
+          this.opts.removeOnFail ??
+          (this as any)._queue?.opts?.defaultJobOptions?.removeOnFail ??
+          false;
         // Final failure: Move to failed
         const failedResult = await this.scripts.moveToFailed(
           this.keys,
           job,
           err,
-          this.opts.removeOnFail ?? false,
+          removeOnFail ?? false
         );
         if (failedResult === 0) {
           // Optionally emit a 'finallyFailed' event here if needed?
           moveSuccessful = true;
         } else {
           console.error(
-            `Failed to move job ${job.id} to final failed state (Redis script code: ${failedResult}).`,
+            `Failed to move job ${job.id} to final failed state (Redis script code: ${failedResult}).`
           );
         }
       }
     } catch (redisError) {
       console.error(
         `Redis error during job failure handling for job ${job.id}:`,
-        redisError,
+        redisError
       );
       // Emit worker error?
       this.emit("error", redisError as Error, job);
@@ -293,7 +304,7 @@ export class Worker<
             this.keys,
             job.id,
             job.lockToken!,
-            this.opts.lockDuration!,
+            this.opts.lockDuration!
           );
           if (newLockedUntil > 0) {
             job.lockedUntil = newLockedUntil;
@@ -302,7 +313,7 @@ export class Worker<
           } else {
             // Lock lost or job gone
             console.warn(
-              `Failed to renew lock for job ${job.id}. It might have been stalled.`,
+              `Failed to renew lock for job ${job.id}. It might have been stalled.`
             );
             this.cleanupJob(job.id); // Stop processing this job
           }
@@ -360,7 +371,7 @@ export class Worker<
           await this.waitForJobsToComplete();
         } else {
           console.log(
-            `Force closing: Skipping wait for ${this.jobsInFlight.size} jobs.`,
+            `Force closing: Skipping wait for ${this.jobsInFlight.size} jobs.`
           );
           // Optionally try to release locks for jobsInFlight? Risky during force close.
         }
