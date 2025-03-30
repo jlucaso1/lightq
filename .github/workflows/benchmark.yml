@@ -69,15 +69,6 @@ jobs:
         run: bun install --frozen-lockfile # Use frozen lockfile for reproducibility
         working-directory: ./bench # Run command inside the bench directory
 
-      - name: Clear Redis Database
-        run: bun run clean-redis
-        working-directory: ./bench # Run command inside the bench directory
-        env:
-          # Make Redis service accessible to redis-cli
-          # The service is mapped to localhost on the runner host
-          REDIS_HOST: localhost # Or 127.0.0.1
-          REDIS_PORT: 6379      # Corresponds to the host port mapped in 'services'
-
       - name: Run Benchmark
         run: bun run bench
         working-directory: ./bench # Run command inside the bench directory
