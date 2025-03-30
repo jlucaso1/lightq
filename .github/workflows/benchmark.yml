@@ -57,14 +57,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-bench-
 
-      # Install redis-cli needed for the clean-redis script
-      - name: Install redis-tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y redis-tools
-        # You could potentially use the redis-cli from the service container too,
-        # but installing it on the runner is often simpler for scripting.
-
       - name: Install Dependencies (Bench)
         run: bun install --frozen-lockfile # Use frozen lockfile for reproducibility
         working-directory: ./bench # Run command inside the bench directory
