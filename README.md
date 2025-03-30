@@ -17,12 +17,14 @@ reliability and ease of use, leveraging atomic Redis operations via Lua scripts.
   transitions in Redis.
 - 🔷 **TypeScript Native:** Written entirely in TypeScript with types included.
 - 🕒 **Delayed Jobs:** Schedule jobs to run after a specific delay.
+- 🗓️ **Scheduled Jobs:** Define recurring jobs using cron patterns or fixed
+  intervals via the integrated Job Scheduler.
 - 🔄 **Automatic Retries:** Failed jobs can be automatically retried with
   configurable backoff strategies (fixed, exponential).
 - ⚖️ **Concurrency Control:** Limit the number of jobs a worker processes
   concurrently.
 - 🧹 **Job Lifecycle Events:** Emit events for `active`, `completed`, `failed`,
-  `retrying`, etc.
+  `retrying`, etc. (including scheduler-specific events).
 - 🗑️ **Automatic Cleanup:** Optionally remove job data automatically upon
   completion or failure.
 
@@ -44,7 +46,12 @@ recommended due to Lua script usage). `ioredis` is used as the Redis client.
 
 ## Basic Usage
 
-Check the ``example/index.ts`
+Check the `example/index.ts` file for a comprehensive demonstration, including:
+
+- Creating Queues and Workers.
+- Adding immediate, delayed, and failing jobs.
+- **Setting up and removing scheduled jobs.**
+- Handling various job lifecycle events.
 
 ## API Overview
 
@@ -56,13 +63,19 @@ Check the ``example/index.ts`
   Adds a single job to the queue.
 - **`addBulk(jobs: { name: TName; data: TData; opts?: JobOptions }[]): Promise<Job<TData, TResult, TName>[]>`**:
   Adds multiple jobs efficiently.
+- **`upsertJobScheduler(schedulerId: string, repeat: SchedulerRepeatOptions, template: JobTemplate): Promise<void>`**:
+  Creates or updates a recurring job schedule associated with this queue. Starts
+  the scheduler polling process if needed.
+- **`removeJobScheduler(schedulerId: string): Promise<boolean>`**: Removes a
+  specific job schedule associated with this queue.
 - **`getJob(jobId: string): Promise<Job<TData, TResult, TName> | null>`**:
   Retrieves job details by ID.
 - **`getJobCounts(): Promise<{ wait: number; active: number; ... }>`**: Gets the
   number of jobs in different states.
-- **`close(): Promise<void>`**: Closes the Redis connection used by the queue.
-- **Events**: `error`, `ready`, `waiting` (when a job is added/ready),
-  `closing`, `closed`.
+- **`close(): Promise<void>`**: Closes the Redis connection used by the queue
+  (and its associated scheduler, if active).
+- **Events**: `error`, `ready`, `waiting`, `closing`, `closed`,
+  `scheduler_error`, `scheduler_job_added`.
 
 ### `Worker<TData, TResult, TName>`
 
@@ -101,6 +114,15 @@ Check the ``example/index.ts`
   - `failedReason`: The error message if the job failed permanently.
   - `stacktrace`: Stack trace if the job failed.
 
+### `JobScheduler`
+
+- While not typically instantiated directly, the `JobScheduler` class manages
+  recurring job schedules. It's accessed via the `Queue`'s `upsertJobScheduler`
+  and `removeJobScheduler` methods. It runs a background process to check for
+  due schedules and adds corresponding jobs to the queue.
+- **Events (Forwarded via Queue)**: `error`, `job_added`, `upsert`, `remove`,
+  `start`, `stop`, `closing`, `closed`.
+
 ## Configuration
 
 ### QueueOptions
@@ -109,6 +131,8 @@ Check the ``example/index.ts`
 - `prefix`: Redis key prefix (default: `lightq`).
 - `defaultJobOptions`: Default `JobOptions` applied to all jobs added to this
   queue.
+- _(Implicitly used by Scheduler)_: `prefix` is used as the base for scheduler
+  keys unless `schedulerPrefix` is provided in `JobSchedulerOptions`.
 
 ### WorkerOptions
 
@@ -127,13 +151,32 @@ Check the ``example/index.ts`
 
 ### JobOptions
 
-- `jobId`: Assign a custom job ID.
+- `jobId`: Assign a custom job ID (cannot start with `scheduler:`).
 - `delay`: Delay (ms) before the job should be processed.
 - `attempts`: Max number of times to attempt the job (default: `1`).
 - `backoff`: Backoff strategy for retries: `number` (fixed delay ms) or
   `{ type: 'fixed' | 'exponential', delay: number }`.
 - `removeOnComplete`: Overrides worker/queue default.
 - `removeOnFail`: Overrides worker/queue default.
+
+### Scheduler Configuration
+
+- **`JobSchedulerOptions` (extends `QueueOptions`)**: Options for the scheduler
+  instance (usually configured internally by the Queue).
+  - `checkInterval`: How often (ms) the scheduler checks for due jobs (default:
+    `5000`).
+  - `schedulerPrefix`: Specific Redis key prefix for scheduler data (defaults to
+    `prefix` from `QueueOptions`).
+- **`SchedulerRepeatOptions`**: Defines when scheduled jobs run.
+  - `{ pattern: string, tz?: string }`: A cron pattern string and optional
+    timezone (e.g., `pattern: '0 * * * *'` for hourly).
+  - `{ every: number }`: A repeat interval in milliseconds (e.g., `every: 60000`
+    for every minute).
+- **`JobTemplate`**: Defines the job created by the scheduler.
+  - `name`: The name of the job to be added to the queue.
+  - `data?`: The data payload for the job.
+  - `opts?`: `JobOptions` for the created job (cannot include `jobId` or
+    `delay`).
 
 ## Contributing
 
