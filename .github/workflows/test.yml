@@ -2,15 +2,15 @@ name: Run Tests & Coverage
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     paths: # Run on push only if these files/folders change
-      - 'src/**'
-      - 'test/**'
-      - 'package.json'
-      - 'bun.lockb'
-      - 'tsconfig.json'
-      - 'scripts/build.ts'
-      - '.github/workflows/test.yml'
+      - "src/**"
+      - "test/**"
+      - "package.json"
+      - "bun.lockb"
+      - "tsconfig.json"
+      - "scripts/build.ts"
+      - ".github/workflows/test.yml"
 
 jobs:
   test:
@@ -29,28 +29,28 @@ jobs:
           --health-retries 5
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Bun
-      uses: oven-sh/setup-bun@v1
-      with:
-        bun-version: latest # Or specify a specific Bun version
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest # Or specify a specific Bun version
 
-    - name: Install dependencies
-      run: bun install --frozen-lockfile # Use frozen lockfile for reproducibility
+      - name: Install dependencies
+        run: bun install --frozen-lockfile # Use frozen lockfile for reproducibility
 
-    - name: Run tests with coverage
-      run: bun test --coverage --coverage-reporter=lcov --coverage-dir=./coverage
-      env:
-        # Make Redis service available to tests
-        REDIS_HOST: localhost
-        REDIS_PORT: 6379 # Corresponds to the host port mapped in 'services'
+      - name: Run tests with coverage
+        run: bun test --coverage --coverage-reporter=lcov --coverage-dir=./coverage
+        env:
+          # Make Redis service available to tests
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379 # Corresponds to the host port mapped in 'services'
 
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }} # Optional: Store Codecov token in GitHub secrets for private repos
-        files: ./coverage/lcov.info # Path to the generated lcov file
-        fail_ci_if_error: true # Optional: Fail the build if Codecov upload fails
-        verbose: true # Optional: Enable verbose logs
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }} # Optional: Store Codecov token in GitHub secrets for private repos
+          files: ./coverage/lcov.info # Path to the generated lcov file
+          fail_ci_if_error: true # Optional: Fail the build if Codecov upload fails
+          verbose: true # Optional: Enable verbose logs

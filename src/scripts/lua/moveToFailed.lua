@@ -65,10 +65,10 @@ else
   redis.call("ZADD", failedKey, now, jobId)
 
   -- Optional: Trim failed set (implement if needed)
-  -- local keepCount = tonumber(removeOption)
-  -- if keepCount and keepCount > 0 then
-  --   redis.call("ZREMRANGEBYRANK", failedKey, 0, -(keepCount + 1))
-  -- end
+  local keepCount = tonumber(removeOption)
+  if keepCount and keepCount > 0 then
+    redis.call("ZREMRANGEBYRANK", failedKey, 0, -(keepCount + 1))
+  end
 end
 
 -- TODO: Emit 'failed' event via Pub/Sub if needed
