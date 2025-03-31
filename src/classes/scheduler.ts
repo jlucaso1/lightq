@@ -1,14 +1,12 @@
-import { EventEmitter } from "node:events";
 import type {
   JobSchedulerOptions,
   JobTemplate,
-  RedisClient,
   SchedulerData,
   SchedulerRepeatOptions,
 } from "../interfaces";
 import type { Queue } from "./queue";
-import { createRedisClient } from "../utils";
 import { Cron } from "croner";
+import { RedisService } from "./base-service";
 
 // Helper to generate scheduler-specific keys
 function getSchedulerKeys(prefix: string, queueName: string) {
@@ -22,40 +20,23 @@ function getSchedulerKeys(prefix: string, queueName: string) {
 
 type SchedulerKeys = ReturnType<typeof getSchedulerKeys>;
 
-export class JobScheduler extends EventEmitter {
+export class JobScheduler extends RedisService<JobSchedulerOptions> {
   private queue: Queue<any, any, any>;
-  private client: RedisClient;
-  private opts: Required<Omit<JobSchedulerOptions, "connection">>; // Make internal opts required
   private keys: SchedulerKeys;
   private checkTimer: NodeJS.Timeout | null = null;
   private running: boolean = false;
-  private closing: Promise<void> | null = null;
+  private schedulerPrefix: string;
 
   // Cache for parsed cron expressions to avoid re-parsing
   private cronCache = new Map<string, Cron>();
 
   constructor(queue: Queue<any, any, any>, opts: JobSchedulerOptions) {
-    super();
+    super(opts);
     this.queue = queue;
 
-    // Use the queue's client if available and compatible, otherwise create new
-    // This assumes queue instance is passed and has a client.
-    // If scheduler can be standalone, client creation needs adjustment.
-    this.client = queue.client || createRedisClient(opts.connection);
+    this.schedulerPrefix = opts.schedulerPrefix ?? this.prefix;
 
-    this.opts = {
-      prefix: opts.prefix ?? "lightq",
-      schedulerPrefix: opts.schedulerPrefix ?? opts.prefix ?? "lightq",
-      checkInterval: opts.checkInterval ?? 5000, // Check every 5 seconds by default
-      defaultJobOptions: opts.defaultJobOptions ?? {},
-    };
-
-    this.keys = getSchedulerKeys(this.opts.schedulerPrefix, queue.name);
-
-    this.client.on(
-      "error",
-      (err) => this.emit("error", `Redis Error: ${err.message}`),
-    );
+    this.keys = getSchedulerKeys(this.schedulerPrefix, queue.name);
   }
 
   /**
@@ -216,28 +197,10 @@ export class JobScheduler extends EventEmitter {
     console.log(`JobScheduler for queue "${this.queue.name}" stopped.`);
   }
 
-  /** Closes the scheduler and its Redis connection (if owned) */
-  async close(): Promise<void> {
-    if (this.closing) {
-      return this.closing;
-    }
-
-    this.closing = (async () => {
-      this.emit("closing");
-      this.stop(); // Stop polling
-
-      // Note: This implementation assumes the client might be shared with the Queue.
-      // If the scheduler owns its client, it should close it here.
-      // await this.client.quit();
-
-      // Clear cron cache
-      this.cronCache.clear();
-
-      this.emit("closed");
-      console.log(`JobScheduler for queue "${this.queue.name}" closed.`);
-    })();
-
-    return this.closing;
+  protected async _internalClose(force = false): Promise<void> {
+    this.stop(); // Stops polling and clears the timer
+    this.cronCache.clear();
+    // No other async cleanup needed before client disconnects
   }
 
   private _scheduleNextCheck(): void {
@@ -408,7 +371,7 @@ export class JobScheduler extends EventEmitter {
         try {
           const recoveryNextRun = Math.max(
             newNextRun,
-            now + this.opts.checkInterval,
+            now + (this.opts.checkInterval || 5000),
           ); // Push it at least one interval out
           await this.client
             .multi()

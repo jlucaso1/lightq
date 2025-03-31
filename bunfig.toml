@@ -1,0 +1,4 @@
+[test]
+root = "./test"
+preload = ["./src/scripts/lua.ts"]
+coverage = true

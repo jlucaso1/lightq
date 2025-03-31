@@ -2,13 +2,18 @@ import { Cluster, Redis, type RedisOptions } from "ioredis";
 
 export type RedisClient = Redis | Cluster;
 
-export interface QueueOptions {
+export interface BaseServiceOptions {
+  /** Redis connection options or an existing ioredis instance */
   connection: RedisOptions | RedisClient;
+  /** Prefix for Redis keys (default: 'lightq') */
   prefix?: string;
+}
+
+export interface QueueOptions extends BaseServiceOptions {
   defaultJobOptions?: JobOptions;
 }
 
-export interface WorkerOptions extends QueueOptions {
+export interface WorkerOptions extends BaseServiceOptions {
   concurrency?: number;
   lockDuration?: number;
   lockRenewTime?: number;
@@ -35,13 +40,11 @@ export interface JobData<T = any> {
   timestamp: number;
   delay: number;
   attemptsMade: number;
-  // State tracking fields managed internally
   processedOn?: number;
   finishedOn?: number;
   returnValue?: any;
   failedReason?: string;
   stacktrace?: string[];
-  // Lock info
   lockedUntil?: number;
   lockToken?: string;
 }
@@ -76,16 +79,15 @@ export interface SchedulerData extends JobTemplate {
   type: "cron" | "every";
   value: string | number; // Cron pattern or 'every' ms
   tz?: string;
-  nextRun: number; // Timestamp (ms)
-  lastRun?: number; // Timestamp (ms)
-  // lockUntil?: number; // Potential future addition for distributed locking
+  nextRun: number;
+  lastRun?: number;
 }
 
 /** Options for the JobScheduler instance */
-export interface JobSchedulerOptions extends QueueOptions {
-  // Reuse QueueOptions for connection
+export interface JobSchedulerOptions extends BaseServiceOptions {
   /** How often the scheduler checks for due jobs (milliseconds) */
   checkInterval?: number;
   /** Prefix for scheduler-specific keys */
   schedulerPrefix?: string;
+  defaultJobOptions?: JobOptions;
 }
