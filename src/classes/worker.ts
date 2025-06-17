@@ -12,14 +12,14 @@ import { RedisService } from "./base-service";
 import { JobProgressUpdater } from "./progress-updater";
 
 export type Processor<
-  TData = any,
-  TResult = any,
+  TData = unknown,
+  TResult = unknown,
   TName extends string = string
 > = (job: Job<TData, TResult, TName>) => Promise<TResult>;
 
 export class Worker<
-  TData = any,
-  TResult = any,
+  TData = unknown,
+  TResult = unknown,
   TName extends string = string
 > extends RedisService<WorkerOptions> {
   readonly name: string;
@@ -151,8 +151,9 @@ export class Worker<
       }
 
       return null;
-    } catch (err: any) {
-      if (this.closing || err.message?.includes("Connection is closed")) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (this.closing || message?.includes("Connection is closed")) {
         return null;
       }
       throw err;

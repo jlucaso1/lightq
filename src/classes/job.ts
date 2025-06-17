@@ -1,6 +1,10 @@
 import type { JobData, JobOptions, ProgressUpdater } from "../interfaces";
 
-export class Job<TData = any, TResult = any, TName extends string = string> {
+export class Job<
+  TData = unknown,
+  TResult = unknown,
+  TName extends string = string
+> {
   id: string;
   name: TName;
   data: TData;
@@ -28,7 +32,7 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
     this.attemptsMade = jobData.attemptsMade;
     this.processedOn = jobData.processedOn;
     this.finishedOn = jobData.finishedOn;
-    this.returnValue = jobData.returnValue;
+    this.returnValue = jobData.returnValue as TResult | undefined;
     this.failedReason = jobData.failedReason;
     this.stacktrace = jobData.stacktrace;
     this.lockedUntil = jobData.lockedUntil;
@@ -38,7 +42,9 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
 
   async updateProgress(progress: number | object): Promise<void> {
     if (!this.progressUpdater) {
-      throw new Error("Progress updater not available. Job was created without progress update capability.");
+      throw new Error(
+        "Progress updater not available. Job was created without progress update capability."
+      );
     }
     await this.progressUpdater.updateProgress(this.id, progress);
   }
@@ -62,20 +68,24 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
     };
   }
 
-  static fromData<TData = any, TResult = any, TName extends string = string>(
+  static fromData<
+    TData = unknown,
+    TResult = unknown,
+    TName extends string = string
+  >(
     jobData: JobData<TData>,
-    progressUpdater?: ProgressUpdater,
+    progressUpdater?: ProgressUpdater
   ): Job<TData, TResult, TName> {
     return new Job<TData, TResult, TName>(jobData, progressUpdater);
   }
 
   static fromRedisHash<
-    TData = any,
-    TResult = any,
-    TName extends string = string,
+    TData = unknown,
+    TResult = unknown,
+    TName extends string = string
   >(
     hashData: Record<string, string>,
-    progressUpdater?: ProgressUpdater,
+    progressUpdater?: ProgressUpdater
   ): Job<TData, TResult, TName> {
     const jobData: Partial<JobData<TData>> = {};
     jobData.id = hashData.id;
@@ -103,8 +113,9 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
       : undefined;
     jobData.lockToken = hashData.lockToken;
 
-    // TODO: Add progress parsing if implemented
-
-    return new Job<TData, TResult, TName>(jobData as JobData<TData>, progressUpdater);
+    return new Job<TData, TResult, TName>(
+      jobData as JobData<TData>,
+      progressUpdater
+    );
   }
 }

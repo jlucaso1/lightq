@@ -32,7 +32,7 @@ export interface JobOptions {
 
 export interface RedisJobOptions extends JobOptions {}
 
-export interface JobData<T = any> {
+export interface JobData<T = unknown> {
   id: string;
   name: string;
   data: T;
@@ -42,7 +42,7 @@ export interface JobData<T = any> {
   attemptsMade: number;
   processedOn?: number;
   finishedOn?: number;
-  returnValue?: any;
+  returnValue?: unknown;
   failedReason?: string;
   stacktrace?: string[];
   lockedUntil?: number;
@@ -51,23 +51,23 @@ export interface JobData<T = any> {
 
 export type SchedulerRepeatOptions =
   | {
-    /** Cron pattern (e.g., '0 * * * *') */
-    pattern: string;
-    /** Optional timezone for cron pattern */
-    tz?: string;
-    /** Not used with pattern */
-    every?: never;
-  }
+      /** Cron pattern (e.g., '0 * * * *') */
+      pattern: string;
+      /** Optional timezone for cron pattern */
+      tz?: string;
+      /** Not used with pattern */
+      every?: never;
+    }
   | {
-    /** Repeat interval in milliseconds */
-    every: number;
-    /** Not used with every */
-    pattern?: never;
-    tz?: never;
-  };
+      /** Repeat interval in milliseconds */
+      every: number;
+      /** Not used with every */
+      pattern?: never;
+      tz?: never;
+    };
 
 /** Template for jobs created by a scheduler */
-export interface JobTemplate<TData = any, TName extends string = string> {
+export interface JobTemplate<TData = unknown, TName extends string = string> {
   name: TName;
   data?: TData;
   opts?: Omit<JobOptions, "jobId" | "delay">; // Cannot set jobId or delay on scheduled jobs

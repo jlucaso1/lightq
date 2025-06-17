@@ -20,8 +20,12 @@ function getSchedulerKeys(prefix: string, queueName: string) {
 
 type SchedulerKeys = ReturnType<typeof getSchedulerKeys>;
 
-export class JobScheduler extends RedisService<JobSchedulerOptions> {
-  private queue: Queue<any, any, any>;
+export class JobScheduler<
+  TData = unknown,
+  TResult = unknown,
+  TName extends string = string
+> extends RedisService<JobSchedulerOptions> {
+  private queue: Queue<TData, TResult, TName>;
   private keys: SchedulerKeys;
   private scripts: LuaScripts;
   private checkTimer: NodeJS.Timeout | null = null;
@@ -29,7 +33,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
   private schedulerPrefix: string;
   private workerId: string;
 
-  constructor(queue: Queue<any, any, any>, opts: JobSchedulerOptions) {
+  constructor(queue: Queue<TData, TResult, TName>, opts: JobSchedulerOptions) {
     super(opts);
     this.queue = queue;
 
@@ -46,7 +50,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
    * @param repeat The repeat options (cron pattern or interval).
    * @param template The template for jobs to be generated.
    */
-  async upsertJobScheduler<TData = any, TName extends string = string>(
+  async upsertJobScheduler<TData = unknown, TName extends string = string>(
     schedulerId: string,
     repeat: SchedulerRepeatOptions,
     template: JobTemplate<TData, TName>
@@ -70,8 +74,9 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
       try {
         const interval = this.parseCron(value, now, tz);
         nextRun = interval.nextRun()?.getTime();
-      } catch (err: any) {
-        throw new Error(`Invalid cron pattern: ${err.message}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Invalid cron pattern: ${message}`);
       }
     } else if (repeat.every) {
       if (typeof repeat.every !== "number" || repeat.every <= 0) {
@@ -121,10 +126,11 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
       multi.zadd(this.keys.index, nextRun, schedulerId);
       await multi.exec();
       this.emit("upsert", schedulerId, schedulerData);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       this.emit(
         "error",
-        `Failed to upsert scheduler ${schedulerId}: ${err.message}`
+        `Failed to upsert scheduler ${schedulerId}: ${message}`
       );
       throw err;
     }
@@ -154,10 +160,11 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         this.emit("remove", schedulerId);
       }
       return deleted;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       this.emit(
         "error",
-        `Failed to remove scheduler ${schedulerId}: ${err.message}`
+        `Failed to remove scheduler ${schedulerId}: ${message}`
       );
       throw err;
     }
@@ -224,11 +231,12 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         if (movedCount > 0) {
           this.queue.emit("movedDelayed", movedCount);
         }
-      } catch (err: any) {
-        if (err.message !== "Connection is closed.") {
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message !== "Connection is closed.") {
           this.emit(
             "error",
-            `Scheduler failed to check delayed jobs: ${err.message}`
+            `Scheduler failed to check delayed jobs: ${message}`
           );
         }
       }
@@ -257,9 +265,10 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         });
 
         await Promise.all(processingPromises);
-      } catch (err: any) {
-        if (err.message !== "Connection is closed.") {
-          this.emit("error", `Scheduler check failed: ${err.message}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message !== "Connection is closed.") {
+          this.emit("error", `Scheduler check failed: ${message}`);
         }
       }
     };
@@ -328,9 +337,10 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
             parsedData.tz
           );
           newNextRun = interval.nextRun()?.getTime() || null;
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
           throw new Error(
-            `Invalid cron pattern (${parsedData.value}): ${err.message}`
+            `Invalid cron pattern (${parsedData.value}): ${message}`
           );
         }
       } else {
@@ -344,8 +354,8 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         return;
       }
 
-      const jobName = parsedData.name;
-      const jobData = parsedData.data;
+      const jobName = parsedData.name as TName;
+      const jobData = parsedData.data as TData;
       const jobOpts = {
         ...this.queue.opts.defaultJobOptions,
         ...this.opts.defaultJobOptions,
@@ -369,10 +379,11 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
       );
       multi.zadd(this.keys.index, newNextRun, schedulerId);
       await multi.exec();
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       this.emit(
         "error",
-        `Failed to process scheduler ${schedulerId}: ${err.message}`
+        `Failed to process scheduler ${schedulerId}: ${message}`
       );
 
       const currentFailureCount = (parsedData?.failureCount || 0) + 1;
@@ -400,9 +411,13 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
             `CRITICAL: Scheduler ${schedulerId} has been automatically disabled after ${maxFailureCount} consecutive failures. ` +
               `It has been scheduled to run again in 1 year. Manual intervention is required.`
           );
-        } catch (disableErr: any) {
+        } catch (disableErr: unknown) {
+          const message =
+            disableErr instanceof Error
+              ? disableErr.message
+              : String(disableErr);
           console.error(
-            `CRITICAL: Failed to disable problematic scheduler ${schedulerId}: ${disableErr.message}`
+            `CRITICAL: Failed to disable problematic scheduler ${schedulerId}: ${message}`
           );
         }
       } else {
@@ -426,9 +441,13 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
             console.warn(
               `Scheduler ${schedulerId} processing error (failure ${currentFailureCount}/${maxFailureCount}), pushed nextRun forward.`
             );
-          } catch (recoveryErr: any) {
+          } catch (recoveryErr: unknown) {
+            const message =
+              recoveryErr instanceof Error
+                ? recoveryErr.message
+                : String(recoveryErr);
             console.error(
-              `Failed recovery update for scheduler ${schedulerId}: ${recoveryErr.message}`
+              `Failed recovery update for scheduler ${schedulerId}: ${message}`
             );
             console.warn(
               `Scheduler ${schedulerId} will be retried on next check interval.`
@@ -442,9 +461,11 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         if (currentLockValue === lockValue) {
           await this.client.del(lockKey);
         }
-      } catch (lockErr: any) {
+      } catch (lockErr: unknown) {
+        const message =
+          lockErr instanceof Error ? lockErr.message : String(lockErr);
         console.warn(
-          `Failed to release lock for scheduler ${schedulerId}: ${lockErr.message}`
+          `Failed to release lock for scheduler ${schedulerId}: ${message}`
         );
       }
     }

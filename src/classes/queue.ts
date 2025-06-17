@@ -18,14 +18,14 @@ import { JobProgressUpdater } from "./progress-updater";
 import type { JobContext, ProgressUpdater } from "../interfaces";
 
 export class Queue<
-  TData = any,
-  TResult = any,
+  TData = unknown,
+  TResult = unknown,
   TName extends string = string
 > extends RedisService<QueueOptions> {
   readonly name: string;
   readonly keys: QueueKeys;
   private scripts: LuaScripts;
-  private scheduler: JobScheduler | null = null;
+  private scheduler: JobScheduler<TData, TResult, TName> | null = null;
   private schedulerOpts: JobSchedulerOptions | null = null;
   private progressUpdater: ProgressUpdater;
 
@@ -201,12 +201,15 @@ export class Queue<
     return (command as any)[scriptName]?.(...keys, ...args);
   }
 
-  private getScheduler(): JobScheduler {
+  private getScheduler(): JobScheduler<TData, TResult, TName> {
     if (!this.scheduler) {
       if (!this.schedulerOpts) {
         throw new Error("Scheduler options not initialized.");
       }
-      this.scheduler = new JobScheduler(this, this.schedulerOpts);
+      this.scheduler = new JobScheduler<TData, TResult, TName>(
+        this,
+        this.schedulerOpts
+      );
       this.scheduler.on("error", (err) => this.emit("scheduler_error", err));
       this.scheduler.on("job_added", (schedulerId, job) =>
         this.emit("scheduler_job_added", schedulerId, job)
@@ -223,7 +226,10 @@ export class Queue<
    * @param repeat The repeat options (cron pattern or interval).
    * @param template The template for jobs to be generated.
    */
-  async upsertJobScheduler<TJobData = any, TJobName extends string = string>(
+  async upsertJobScheduler<
+    TJobData = unknown,
+    TJobName extends string = string
+  >(
     schedulerId: string,
     repeat: SchedulerRepeatOptions,
     template: JobTemplate<TJobData, TJobName>

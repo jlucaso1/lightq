@@ -18,53 +18,45 @@ export class LuaScripts {
       lua: loadLuaScriptContent("addJob"),
     });
 
-
-    // moveToCompleted
     this.client.defineCommand("moveToCompleted", {
       numberOfKeys: 3,
       lua: loadLuaScriptContent("moveToCompleted"),
     });
 
-    // moveToFailed
     this.client.defineCommand("moveToFailed", {
       numberOfKeys: 3,
       lua: loadLuaScriptContent("moveToFailed"),
     });
 
-    // retryJob
     this.client.defineCommand("retryJob", {
       numberOfKeys: 4,
       lua: loadLuaScriptContent("retryJob"),
     });
 
-    // moveDelayedToWait
     this.client.defineCommand("moveDelayedToWait", {
       numberOfKeys: 2,
       lua: loadLuaScriptContent("moveDelayedToWait"),
     });
 
-    // extendLock
     this.client.defineCommand("extendLock", {
       numberOfKeys: 1,
       lua: loadLuaScriptContent("extendLock"),
     });
 
-    // moveSpecificJobToActive
     this.client.defineCommand("moveSpecificJobToActive", {
       numberOfKeys: 2,
       lua: loadLuaScriptContent("moveSpecificJobToActive"),
     });
 
-    // lockAndGetScheduler
     this.client.defineCommand("lockAndGetScheduler", {
       numberOfKeys: 2,
       lua: loadLuaScriptContent("lockAndGetScheduler"),
     });
   }
 
-  async addJob(
+  async addJob<TData>(
     keys: QueueKeys,
-    jobData: JobData<any>,
+    jobData: JobData<TData>,
     pipeline?: Pipeline,
   ): Promise<string> {
     const command = pipeline || this.client;
@@ -85,10 +77,10 @@ export class LuaScripts {
   }
 
 
-  async moveToCompleted(
+  async moveToCompleted<TData, TResult, TName extends string>(
     keys: QueueKeys,
-    job: Job<any, any, any>,
-    returnValue: any,
+    job: Job<TData, TResult, TName>,
+    returnValue: TResult,
     removeOnComplete: boolean | number,
   ): Promise<number> {
     const now = Date.now();
@@ -106,9 +98,9 @@ export class LuaScripts {
     );
   }
 
-  async moveToFailed(
+  async moveToFailed<TData, TResult, TName extends string>(
     keys: QueueKeys,
-    job: Job<any, any, any>,
+    job: Job<TData, TResult, TName>,
     error: Error,
     removeOnFail: boolean | number,
   ): Promise<number> {
@@ -139,9 +131,9 @@ export class LuaScripts {
     );
   }
 
-  async retryJob(
+  async retryJob<TData, TResult, TName extends string>(
     keys: QueueKeys,
-    job: Job<any, any, any>,
+    job: Job<TData, TResult, TName>,
     delay: number,
     error: Error,
   ): Promise<number> {
@@ -183,8 +175,6 @@ export class LuaScripts {
     token: string,
     duration: number,
   ): Promise<number> {
-    // jobsPrefix is not needed directly, jobKey is constructed in Lua
-    // const jobKey = `${keys.jobs}:${jobId}`; // Constructing jobKey here is not needed for the call
     const now = Date.now();
     const args = [jobId, token, duration.toString(), now.toString()];
     // @ts-ignore
