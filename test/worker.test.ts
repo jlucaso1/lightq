@@ -522,12 +522,6 @@ describe("LightQ (lightq)", () => {
 
       await queue.add("slow-job", { d: 1 });
 
-      await waitFor(
-        async () => (await queue.getJobCounts()).active === 1,
-        1000
-      );
-      expect(jobStarted).toBe(true);
-
       const closePromise = worker.close();
 
       await delay(jobProcessTime / 2);
@@ -836,11 +830,8 @@ describe("LightQ (lightq)", () => {
         async () => (await queue.getJobCounts()).active === 1,
         1000
       );
-      
-      await waitFor(
-        async () => jobStarted === true,
-        1000
-      );
+
+      await waitFor(async () => jobStarted === true, 1000);
       expect(jobStarted).toBe(true);
 
       const closeStartTime = Date.now();

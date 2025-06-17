@@ -91,4 +91,11 @@ export interface JobSchedulerOptions extends BaseServiceOptions {
   /** Prefix for scheduler-specific keys */
   schedulerPrefix?: string;
   defaultJobOptions?: JobOptions;
+  /** Duration in seconds for distributed locking when processing schedulers (default: 10) */
+  lockDuration?: number;
+  /** Maximum consecutive failures before disabling a scheduler (default: 5) */
+  maxFailureCount?: number;
 }
+
+// Export job context interfaces
+export * from "./job-context";

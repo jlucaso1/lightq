@@ -14,17 +14,20 @@ import { Pipeline } from "ioredis";
 import { Buffer } from "node:buffer";
 import { JobScheduler } from "./scheduler";
 import { RedisService } from "./base-service";
+import { JobProgressUpdater } from "./progress-updater";
+import type { JobContext, ProgressUpdater } from "../interfaces";
 
 export class Queue<
   TData = any,
   TResult = any,
-  TName extends string = string,
+  TName extends string = string
 > extends RedisService<QueueOptions> {
   readonly name: string;
   readonly keys: QueueKeys;
   private scripts: LuaScripts;
   private scheduler: JobScheduler | null = null;
   private schedulerOpts: JobSchedulerOptions | null = null;
+  private progressUpdater: ProgressUpdater;
 
   constructor(name: string, opts: QueueOptions) {
     super(opts);
@@ -32,21 +35,24 @@ export class Queue<
     this.keys = getQueueKeys(this.prefix, this.name);
     this.scripts = new LuaScripts(this.client);
 
+    const jobContext: JobContext = {
+      client: this.client,
+      keys: this.keys,
+    };
+    this.progressUpdater = new JobProgressUpdater(jobContext);
+
     this.schedulerOpts = {
-      connection: this.client, // Share connection by default
+      connection: this.client,
       prefix: this.prefix,
       defaultJobOptions: this.opts.defaultJobOptions,
-      // Make scheduler prefix configurable if needed, defaults to queue prefix
       schedulerPrefix: opts.prefix ?? "lightq",
-      // Allow overriding checkInterval via QueueOptions potentially?
-      // checkInterval: (opts as any).schedulerCheckInterval ?? 5000,
     };
   }
 
   async add(
     name: TName,
     data: TData,
-    opts?: JobOptions,
+    opts?: JobOptions
   ): Promise<Job<TData, TResult, TName>> {
     if (this.closing) {
       throw new Error("Queue is closing");
@@ -61,12 +67,10 @@ export class Queue<
 
     if (mergedOpts?.jobId?.startsWith("scheduler:")) {
       console.warn(
-        `Attempting to manually add a job with a reserved scheduler ID prefix: ${mergedOpts.jobId}. Schedulers manage their own job IDs.`,
+        `Attempting to manually add a job with a reserved scheduler ID prefix: ${mergedOpts.jobId}. Schedulers manage their own job IDs.`
       );
-      // Decide whether to throw an error or just remove the conflicting ID
-      // mergedOpts.jobId = undefined; // Option: Silently fix
       throw new Error(
-        `Cannot manually add job with reserved scheduler ID: ${mergedOpts.jobId}`,
+        `Cannot manually add job with reserved scheduler ID: ${mergedOpts.jobId}`
       );
     }
 
@@ -85,13 +89,16 @@ export class Queue<
 
     await this.scripts.addJob(this.keys, jobData);
 
-    const job = Job.fromData<TData, TResult, TName>(this, jobData);
+    const job = Job.fromData<TData, TResult, TName>(
+      jobData,
+      this.progressUpdater
+    );
     this.emit("waiting", job);
     return job;
   }
 
   async addBulk(
-    jobs: { name: TName; data: TData; opts?: JobOptions }[],
+    jobs: { name: TName; data: TData; opts?: JobOptions }[]
   ): Promise<Job<TData, TResult, TName>[]> {
     if (this.closing) {
       throw new Error("Queue is closing");
@@ -113,7 +120,7 @@ export class Queue<
       };
       if (mergedOpts?.jobId?.startsWith("scheduler:")) {
         console.warn(
-          `Attempting to bulk add a job with a reserved scheduler ID prefix: ${mergedOpts.jobId}. Skipping this specific job.`,
+          `Attempting to bulk add a job with a reserved scheduler ID prefix: ${mergedOpts.jobId}. Skipping this specific job.`
         );
         continue;
       }
@@ -130,7 +137,9 @@ export class Queue<
       };
 
       this.scripts.addJob(this.keys, jobData, pipeline);
-      jobInstances.push(Job.fromData<TData, TResult, TName>(this, jobData));
+      jobInstances.push(
+        Job.fromData<TData, TResult, TName>(jobData, this.progressUpdater)
+      );
     }
 
     await pipeline.exec();
@@ -145,7 +154,7 @@ export class Queue<
     if (Object.keys(data).length === 0) {
       return null;
     }
-    return Job.fromRedisHash<TData, TResult, TName>(this, data);
+    return Job.fromRedisHash<TData, TResult, TName>(data, this.progressUpdater);
   }
 
   async getJobCounts(): Promise<{
@@ -185,7 +194,7 @@ export class Queue<
     scriptName: string,
     keys: string[],
     args: (string | number | Buffer)[],
-    pipeline?: Pipeline,
+    pipeline?: Pipeline
   ): Promise<any> {
     const command = pipeline || this.client;
 
@@ -195,19 +204,14 @@ export class Queue<
   private getScheduler(): JobScheduler {
     if (!this.scheduler) {
       if (!this.schedulerOpts) {
-        // This case shouldn't happen with the constructor logic
         throw new Error("Scheduler options not initialized.");
       }
       this.scheduler = new JobScheduler(this, this.schedulerOpts);
-      // Forward scheduler events if needed
       this.scheduler.on("error", (err) => this.emit("scheduler_error", err));
-      this.scheduler.on(
-        "job_added",
-        (schedulerId, job) =>
-          this.emit("scheduler_job_added", schedulerId, job),
+      this.scheduler.on("job_added", (schedulerId, job) =>
+        this.emit("scheduler_job_added", schedulerId, job)
       );
-      // ... forward other events like upsert, remove, start, stop ...
-      this.scheduler.start(); // Start the scheduler when first accessed
+      this.scheduler.start();
     }
     return this.scheduler;
   }
@@ -222,12 +226,12 @@ export class Queue<
   async upsertJobScheduler<TJobData = any, TJobName extends string = string>(
     schedulerId: string,
     repeat: SchedulerRepeatOptions,
-    template: JobTemplate<TJobData, TJobName>,
+    template: JobTemplate<TJobData, TJobName>
   ): Promise<void> {
     return this.getScheduler().upsertJobScheduler(
       schedulerId,
       repeat,
-      template,
+      template
     );
   }
 
@@ -236,18 +240,12 @@ export class Queue<
    * @param schedulerId The ID of the scheduler to remove.
    */
   async removeJobScheduler(schedulerId: string): Promise<boolean> {
-    // Only try to remove if the scheduler has potentially been initialized
     if (this.scheduler) {
       return this.scheduler.removeJobScheduler(schedulerId);
     }
-    // If scheduler never started, try removing directly via a temporary instance or static method (less ideal)
-    // For simplicity, assume remove is called after scheduler might have been used.
-    // Or, instantiate it just to remove (might start polling unnecessarily):
-    // return this.getScheduler().removeJobScheduler(schedulerId);
-    // Best: If scheduler is not active, deletion via direct redis command is okay if needed
     console.warn(
-      "Attempted to remove scheduler before scheduler process was started for this queue.",
+      "Attempted to remove scheduler before scheduler process was started for this queue."
     );
-    return false; // Indicate not removed as scheduler wasn't active
+    return false;
   }
 }

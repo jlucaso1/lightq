@@ -1,6 +1,4 @@
-import type { JobData, JobOptions } from "../interfaces";
-import type { QueueKeys } from "../utils";
-import type { Queue } from "./queue";
+import type { JobData, JobOptions, ProgressUpdater } from "../interfaces";
 
 export class Job<TData = any, TResult = any, TName extends string = string> {
   id: string;
@@ -18,13 +16,9 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
   lockedUntil?: number;
   lockToken?: string;
 
-  private queue: Queue;
-  private queueKeys: QueueKeys;
+  private progressUpdater?: ProgressUpdater;
 
-  constructor(queue: Queue, jobData: JobData<TData>) {
-    this.queue = queue;
-    this.queueKeys = queue.keys;
-
+  constructor(jobData: JobData<TData>, progressUpdater?: ProgressUpdater) {
     this.id = jobData.id;
     this.name = jobData.name as TName;
     this.data = jobData.data;
@@ -39,22 +33,14 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
     this.stacktrace = jobData.stacktrace;
     this.lockedUntil = jobData.lockedUntil;
     this.lockToken = jobData.lockToken;
+    this.progressUpdater = progressUpdater;
   }
 
   async updateProgress(progress: number | object): Promise<void> {
-    // Store progress in the job hash and emit a progress event
-    const jobKey = `${this.queueKeys.jobs}:${this.id}`;
-    const progressValue = JSON.stringify(progress);
-    
-    await this.queue.client.hset(jobKey, "progress", progressValue);
-    
-    // Publish progress update to a progress channel for real-time updates
-    const progressChannel = `${this.queueKeys.base}:progress`;
-    await this.queue.client.publish(progressChannel, JSON.stringify({
-      jobId: this.id,
-      progress: progress,
-      timestamp: Date.now()
-    }));
+    if (!this.progressUpdater) {
+      throw new Error("Progress updater not available. Job was created without progress update capability.");
+    }
+    await this.progressUpdater.updateProgress(this.id, progress);
   }
 
   toData(): JobData<TData> {
@@ -77,10 +63,10 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
   }
 
   static fromData<TData = any, TResult = any, TName extends string = string>(
-    queue: Queue,
     jobData: JobData<TData>,
+    progressUpdater?: ProgressUpdater,
   ): Job<TData, TResult, TName> {
-    return new Job<TData, TResult, TName>(queue, jobData);
+    return new Job<TData, TResult, TName>(jobData, progressUpdater);
   }
 
   static fromRedisHash<
@@ -88,8 +74,8 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
     TResult = any,
     TName extends string = string,
   >(
-    queue: Queue,
     hashData: Record<string, string>,
+    progressUpdater?: ProgressUpdater,
   ): Job<TData, TResult, TName> {
     const jobData: Partial<JobData<TData>> = {};
     jobData.id = hashData.id;
@@ -119,6 +105,6 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
 
     // TODO: Add progress parsing if implemented
 
-    return new Job<TData, TResult, TName>(queue, jobData as JobData<TData>);
+    return new Job<TData, TResult, TName>(jobData as JobData<TData>, progressUpdater);
   }
 }

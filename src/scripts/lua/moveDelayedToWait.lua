@@ -29,9 +29,6 @@ if numJobIds > 0 then
   redis.call("ZREM", delayedKey, unpack(jobIds))
   redis.call("LPUSH", waitKey, unpack(jobIds))
 
-  -- TODO: Update delay field in job hashes to 0? (Optional optimization)
-  -- TODO: Emit 'waiting' events via Pub/Sub?
-  -- TODO: Add wait marker?
 end
 
 return numJobIds -- Return the count

@@ -54,6 +54,12 @@ export class LuaScripts {
       numberOfKeys: 2,
       lua: loadLuaScriptContent("moveSpecificJobToActive"),
     });
+
+    // lockAndGetScheduler
+    this.client.defineCommand("lockAndGetScheduler", {
+      numberOfKeys: 2,
+      lua: loadLuaScriptContent("lockAndGetScheduler"),
+    });
   }
 
   async addJob(
@@ -205,6 +211,30 @@ export class LuaScripts {
         jobDataMap[result[i]] = result[i + 1];
       }
       return jobDataMap;
+    }
+    return null;
+  }
+
+  async lockAndGetScheduler(
+    lockKey: string,
+    schedulerKey: string,
+    lockValue: string,
+    lockDuration: number,
+  ): Promise<Record<string, string> | null> {
+    const args = [lockValue, lockDuration.toString()];
+    // @ts-ignore
+    const result = await this.client.lockAndGetScheduler(
+      lockKey,
+      schedulerKey,
+      ...args,
+    );
+    
+    if (result && Array.isArray(result) && result.length > 0) {
+      const schedulerDataMap: Record<string, string> = {};
+      for (let i = 0; i < result.length; i += 2) {
+        schedulerDataMap[result[i]] = result[i + 1];
+      }
+      return schedulerDataMap;
     }
     return null;
   }

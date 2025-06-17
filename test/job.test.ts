@@ -105,7 +105,7 @@ describe("LightQ (lightq)", () => {
         delay: 0,
         attemptsMade: 0,
       };
-      const job = Job.fromData(queue, jobData);
+      const job = Job.fromData(jobData);
       expect(job).toBeInstanceOf(Job);
       expect(job.id).toBe("job-1");
       expect(job.data).toEqual({ x: 1 });
@@ -129,7 +129,7 @@ describe("LightQ (lightq)", () => {
         lockedUntil: undefined,
         lockToken: undefined,
       };
-      const job = Job.fromData(queue, jobDataInput);
+      const job = Job.fromData(jobDataInput);
       const jobDataOutput = job.toData();
 
       expect(jobDataOutput.id).toBe(jobDataInput.id);

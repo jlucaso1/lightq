@@ -118,6 +118,7 @@ describe("LightQ (lightq)", () => {
     let hgetallSpy: any;
     let multiSpy: any;
     let execSpy: any;
+    let lockAndGetSchedulerSpy: any;
 
     beforeEach(() => {
       queue = createQueue(testQueueName + "-sched");
@@ -128,6 +129,12 @@ describe("LightQ (lightq)", () => {
         schedulerPrefix: "testprefix",
       });
       schedulersToClose.push(scheduler);
+
+      // Add a spy for the high-level script method
+      lockAndGetSchedulerSpy = spyOn(
+        scheduler["scripts"],
+        "lockAndGetScheduler"
+      ).mockResolvedValue(null);
 
       mockClient = scheduler["client"];
       hsetSpy = spyOn(mockClient, "hset").mockResolvedValue(1);
@@ -167,6 +174,33 @@ describe("LightQ (lightq)", () => {
       expect(scheduler.opts.checkInterval).toBe(50);
       // @ts-ignore
       expect(scheduler.keys.base).toBe(`testprefix:${queue.name}:schedulers`);
+    });
+
+    it("should initialize with configurable lockDuration and maxFailureCount", () => {
+      const customScheduler = new JobScheduler(queue, {
+        connection: queue.client,
+        lockDuration: 30,
+        maxFailureCount: 10,
+      });
+      schedulersToClose.push(customScheduler);
+
+      // @ts-ignore
+      expect(customScheduler.opts.lockDuration).toBe(30);
+      // @ts-ignore
+      expect(customScheduler.opts.maxFailureCount).toBe(10);
+    });
+
+    it("should use default values for lockDuration and maxFailureCount when not specified", () => {
+      const defaultScheduler = new JobScheduler(queue, {
+        connection: queue.client,
+      });
+      schedulersToClose.push(defaultScheduler);
+
+      // Default values should be used (10 and 5 respectively)
+      // @ts-ignore
+      expect(defaultScheduler.opts.lockDuration).toBeUndefined();
+      // @ts-ignore
+      expect(defaultScheduler.opts.maxFailureCount).toBeUndefined();
     });
 
     describe("upsertJobScheduler", () => {
@@ -478,19 +512,15 @@ describe("LightQ (lightq)", () => {
         clearTimeoutSpy.mockRestore();
       });
 
-      it("should close the scheduler, stop it, and clear cron cache", async () => {
+      it("should close the scheduler, stop it", async () => {
         const stopSpy = spyOn(scheduler, "stop");
-        const cronClearSpy = spyOn(scheduler["cronCache"], "clear"); // Access private cache
 
         // @ts-ignore - Set manually for test
         scheduler.running = true;
-        // Add dummy entry to cache
-        scheduler["cronCache"].set("dummy", {} as any);
 
         await scheduler.close();
 
         expect(stopSpy).toHaveBeenCalledTimes(1);
-        expect(cronClearSpy).toHaveBeenCalledTimes(1);
         // @ts-ignore
         expect(scheduler.closing).toBeInstanceOf(Promise); // Should be resolving/resolved
         // @ts-ignore
@@ -533,7 +563,6 @@ describe("LightQ (lightq)", () => {
       });
 
       it("should find due jobs and process them", async () => {
-        // This function failing maybe can be related to bun macros
         const now = Date.now();
         (Date.now as any).mockReturnValue(now);
         const schedulerId1 = "due-job-1";
@@ -544,42 +573,46 @@ describe("LightQ (lightq)", () => {
           data: { i: 2 },
           opts: { attempts: 5 },
         };
-        const repeat1: SchedulerRepeatOptions = { every: 5000 }; // Next run = now + 5000
-        const repeat2: SchedulerRepeatOptions = { pattern: "* * * * *" }; // Next run calculated by Croner
+        const repeat1: SchedulerRepeatOptions = { every: 5000 };
+        const repeat2: SchedulerRepeatOptions = { pattern: "* * * * *" };
         const nextRun2 = new Cron(repeat2.pattern!)
           .nextRun(new Date(now))!
           .getTime();
 
-        // Mock Redis responses
+        // 1. Mock the list of due jobs
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId1, schedulerId2]);
-        hgetallSpy
+
+        // 2. Mock the result of the lock-and-get script for EACH job
+        lockAndGetSchedulerSpy
           .mockResolvedValueOnce({
-            // Data for schedulerId1
             id: schedulerId1,
             type: "every",
             value: "5000",
-            nextRun: (now - 100).toString(), // Due
+            nextRun: (now - 100).toString(),
             name: jobTemplate1.name,
             data: JSON.stringify(jobTemplate1.data),
             opts: "{}",
           })
           .mockResolvedValueOnce({
-            // Data for schedulerId2
             id: schedulerId2,
             type: "cron",
             value: repeat2.pattern!,
-            nextRun: (now - 50).toString(), // Due
+            nextRun: (now - 50).toString(),
             name: jobTemplate2.name,
             data: JSON.stringify(jobTemplate2.data),
             opts: JSON.stringify(jobTemplate2.opts),
           });
 
-        execSpy.mockResolvedValue([[null, 1]]); // Simulate success for both updates
+        execSpy.mockResolvedValue([[null, 1]]);
         scheduler["running"] = true;
         const emitSpy = spyOn(scheduler, "emit");
 
-        // @ts-ignore - Manually trigger the check
-        await scheduler._checkAndProcessDueJobs();
+        // 3. Run the function to test
+        await scheduler["_checkAndProcessDueJobs"]();
+
+        // 4. Assertions (these should now pass)
+        expect(lockAndGetSchedulerSpy).toHaveBeenCalledTimes(2);
+        expect(queueAddSpy).toHaveBeenCalledTimes(2);
 
         expect(queueAddSpy).toHaveBeenCalledWith(
           jobTemplate1.name,
@@ -589,12 +622,12 @@ describe("LightQ (lightq)", () => {
             delay: undefined,
           })
         );
+
         const expectedKey1 = `testprefix:${queue.name}:schedulers:${schedulerId1}`;
         const expectedNextRun1 = now + repeat1.every!;
         expect(multiSpy).toHaveBeenCalledTimes(2);
         expect(execSpy).toHaveBeenCalledTimes(2);
 
-        // Check the HSET and ZADD calls within the first multi/exec
         const pipelineInstance1 = multiSpy.mock.results[0].value;
         expect(pipelineInstance1.hset).toHaveBeenCalledWith(
           expectedKey1,
@@ -656,8 +689,9 @@ describe("LightQ (lightq)", () => {
         const schedulerId2 = "due-job-2";
 
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId1, schedulerId2]);
-        
-        hgetallSpy
+
+        // Mock the lock-and-get script for both schedulers
+        lockAndGetSchedulerSpy
           .mockResolvedValueOnce({
             id: schedulerId1,
             type: "every",
@@ -708,16 +742,9 @@ describe("LightQ (lightq)", () => {
       it("should handle missing scheduler data after zrangebyscore (race condition)", async () => {
         const schedulerId = "deleted-job";
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId]);
-        hgetallSpy.mockResolvedValueOnce({});
 
-        const setSpy = spyOn(mockClient, "set").mockImplementation(
-          (key: string, value: string, ...args: any[]) =>
-            Promise.resolve("OK" as "OK")
-        );
-        const getSpy = spyOn(mockClient, "get").mockResolvedValue(
-          "test-lock-value"
-        );
-        const delSpy = spyOn(mockClient, "del").mockResolvedValue(1);
+        // Mock the lock-and-get script to return empty object (scheduler was deleted)
+        lockAndGetSchedulerSpy.mockResolvedValueOnce({});
 
         zremSpy.mockClear();
 
@@ -726,9 +753,7 @@ describe("LightQ (lightq)", () => {
         // @ts-ignore
         await scheduler._checkAndProcessDueJobs();
 
-        expect(hgetallSpy).toHaveBeenCalledWith(
-          `testprefix:${queue.name}:schedulers:${schedulerId}`
-        );
+        expect(lockAndGetSchedulerSpy).toHaveBeenCalledTimes(1);
         expect(zremSpy).toHaveBeenCalledWith(
           scheduler["keys"].index,
           schedulerId
@@ -746,14 +771,6 @@ describe("LightQ (lightq)", () => {
         const jobTemplate: JobTemplate = { name: "wont-add" };
         const addError = new Error("Queue is full");
         const checkInterval = scheduler["opts"].checkInterval || 50;
-        const recoveryNextRun = now + checkInterval; // Predictable recovery time
-
-        // Mock distributed locking
-        const setSpy = spyOn(mockClient, "set").mockResolvedValue("OK"); // Lock acquired
-        const getSpy = spyOn(mockClient, "get").mockResolvedValue(
-          "test-lock-value"
-        );
-        const delSpy = spyOn(mockClient, "del").mockResolvedValue(1);
 
         // Set up error event listener to prevent unhandled errors
         const errorHandler = mock(() => {});
@@ -762,7 +779,9 @@ describe("LightQ (lightq)", () => {
         // Arrange: Set up spies and mocks for this specific scenario
         queueAddSpy.mockRejectedValueOnce(addError);
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId]);
-        hgetallSpy.mockResolvedValueOnce({
+
+        // Mock the lock-and-get script to return scheduler data
+        lockAndGetSchedulerSpy.mockResolvedValueOnce({
           id: schedulerId,
           type: "every",
           value: "5000",
@@ -833,13 +852,6 @@ describe("LightQ (lightq)", () => {
         const addError = new Error("Queue failed");
         const recoveryError = new Error("Redis recovery failed");
 
-        // Mock distributed locking
-        const setSpy = spyOn(mockClient, "set").mockResolvedValue("OK"); // Lock acquired
-        const getSpy = spyOn(mockClient, "get").mockResolvedValue(
-          "test-lock-value"
-        );
-        const delSpy = spyOn(mockClient, "del").mockResolvedValue(1);
-
         // Set up error event listener to prevent unhandled errors
         const errorHandler = mock(() => {});
         scheduler.on("error", errorHandler);
@@ -847,7 +859,9 @@ describe("LightQ (lightq)", () => {
         // Arrange: Set up the scenario where both queue.add and recovery fail
         queueAddSpy.mockRejectedValueOnce(addError);
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId]);
-        hgetallSpy.mockResolvedValueOnce({
+
+        // Mock the lock-and-get script to return scheduler data
+        lockAndGetSchedulerSpy.mockResolvedValueOnce({
           id: schedulerId,
           type: "every",
           value: "5000",
@@ -902,6 +916,156 @@ describe("LightQ (lightq)", () => {
         scheduler["running"] = false;
       });
 
+      it("should use configurable lockDuration when processing schedulers", async () => {
+        // Create a scheduler with custom lockDuration
+        const customLockDuration = 25;
+        const customScheduler = new JobScheduler(queue, {
+          connection: queue.client,
+          lockDuration: customLockDuration,
+          checkInterval: 50,
+        });
+        schedulersToClose.push(customScheduler);
+
+        const lockAndGetCustomSpy = spyOn(
+          customScheduler["scripts"],
+          "lockAndGetScheduler"
+        ).mockResolvedValue({
+          id: "test-scheduler",
+          type: "every",
+          value: "5000",
+          nextRun: (Date.now() - 100).toString(),
+          name: "testTask",
+          data: "{}",
+          opts: "{}",
+        });
+
+        const zrangebyscoreCustomSpy = spyOn(
+          customScheduler["client"],
+          "zrangebyscore"
+        ).mockResolvedValue(["test-scheduler"]);
+
+        const queueAddCustomSpy = spyOn(queue, "add").mockResolvedValue(
+          {} as Job
+        );
+
+        const multiCustomSpy = spyOn(
+          customScheduler["client"],
+          "multi"
+        ).mockImplementation(() => {
+          const pipeline = new Pipeline(customScheduler["client"]);
+          pipeline.hset = mock().mockReturnThis();
+          pipeline.zadd = mock().mockReturnThis();
+          pipeline.exec = mock().mockResolvedValue([[null, 1]]);
+          return pipeline as any;
+        });
+
+        customScheduler["running"] = true;
+
+        await customScheduler["_checkAndProcessDueJobs"]();
+
+        // Verify that lockAndGetScheduler was called with the custom lockDuration
+        expect(lockAndGetCustomSpy).toHaveBeenCalledWith(
+          expect.stringContaining("lock:test-scheduler"),
+          expect.stringContaining("schedulers:test-scheduler"),
+          expect.stringMatching(/^scheduler-.*-\d+$/),
+          customLockDuration // This should be the custom value
+        );
+
+        lockAndGetCustomSpy.mockRestore();
+        zrangebyscoreCustomSpy.mockRestore();
+        queueAddCustomSpy.mockRestore();
+        multiCustomSpy.mockRestore();
+      });
+
+      it("should use configurable maxFailureCount for poison pill mechanism", async () => {
+        // Create a scheduler with custom maxFailureCount
+        const customMaxFailureCount = 3;
+        const customScheduler = new JobScheduler(queue, {
+          connection: queue.client,
+          maxFailureCount: customMaxFailureCount,
+          checkInterval: 50,
+        });
+        schedulersToClose.push(customScheduler);
+
+        const schedulerId = "failing-scheduler";
+        const addError = new Error("Persistent failure");
+        const now = Date.now();
+
+        // Set up error event listener
+        const errorHandler = mock(() => {});
+        customScheduler.on("error", errorHandler);
+
+        // Mock queue.add to always fail
+        const queueAddCustomSpy = spyOn(queue, "add").mockRejectedValue(
+          addError
+        );
+
+        const zrangebyscoreCustomSpy = spyOn(
+          customScheduler["client"],
+          "zrangebyscore"
+        ).mockResolvedValue([schedulerId]);
+
+        const lockAndGetCustomSpy = spyOn(
+          customScheduler["scripts"],
+          "lockAndGetScheduler"
+        ).mockResolvedValue({
+          id: schedulerId,
+          type: "every",
+          value: "5000",
+          nextRun: (now - 100).toString(),
+          name: "failingTask",
+          data: "{}",
+          opts: "{}",
+          failureCount: (customMaxFailureCount - 1).toString(), // One failure away from threshold
+        });
+
+        const multiCustomSpy = spyOn(
+          customScheduler["client"],
+          "multi"
+        ).mockImplementation(() => {
+          const pipeline = new Pipeline(customScheduler["client"]);
+          pipeline.hset = mock().mockReturnThis();
+          pipeline.zadd = mock().mockReturnThis();
+          pipeline.exec = mock().mockResolvedValue([[null, 1]]);
+          return pipeline as any;
+        });
+
+        const consoleErrorSpy = spyOn(console, "error");
+
+        customScheduler["running"] = true;
+        (Date.now as any).mockReturnValue(now);
+
+        await customScheduler["_checkAndProcessDueJobs"]();
+
+        // Verify that the scheduler was disabled after reaching the custom maxFailureCount
+        expect(multiCustomSpy).toHaveBeenCalledTimes(1);
+        const pipelineInstance = multiCustomSpy.mock.results[0].value as any;
+
+        // Should disable scheduler by setting nextRun to far future
+        const disabledNextRun = now + 365 * 24 * 60 * 60 * 1000; // 1 year from now
+        expect(pipelineInstance.hset).toHaveBeenCalledWith(
+          expect.stringContaining(schedulerId),
+          "nextRun",
+          disabledNextRun.toString(),
+          "failureCount",
+          customMaxFailureCount.toString()
+        );
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(
+            `CRITICAL: Scheduler ${schedulerId} has been automatically disabled after ${customMaxFailureCount} consecutive failures`
+          )
+        );
+
+        // Cleanup
+        consoleErrorSpy.mockRestore();
+        queueAddCustomSpy.mockRestore();
+        zrangebyscoreCustomSpy.mockRestore();
+        lockAndGetCustomSpy.mockRestore();
+        multiCustomSpy.mockRestore();
+        customScheduler.removeAllListeners("error");
+      });
+
       it("should skip job if its nextRun is in the future (race condition handled by another process)", async () => {
         // Arrange: Control the environment
         const now = Date.now();
@@ -910,19 +1074,12 @@ describe("LightQ (lightq)", () => {
         const schedulerId = "future-job";
         const futureNextRun = now + 10000; // 10 seconds in the future
 
-        // Mock distributed locking
-        const setSpy = spyOn(mockClient, "set").mockResolvedValue("OK"); // Lock acquired
-        const getSpy = spyOn(mockClient, "get").mockResolvedValue(
-          "test-lock-value"
-        );
-        const delSpy = spyOn(mockClient, "del").mockResolvedValue(1);
-
         // Arrange: Set up the race condition scenario
         // zrangebyscore finds the job (it was due when queried)
         zrangebyscoreSpy.mockResolvedValueOnce([schedulerId]);
 
-        // But hgetall reveals it was updated by another process to a future time
-        hgetallSpy.mockResolvedValueOnce({
+        // But lock-and-get reveals it was updated by another process to a future time
+        lockAndGetSchedulerSpy.mockResolvedValueOnce({
           id: schedulerId,
           type: "every",
           value: "5000",
@@ -942,7 +1099,7 @@ describe("LightQ (lightq)", () => {
         await scheduler["_checkAndProcessDueJobs"]();
 
         // Assert: Verify the race condition was handled correctly
-        expect(hgetallSpy).toHaveBeenCalledTimes(1);
+        expect(lockAndGetSchedulerSpy).toHaveBeenCalledTimes(1);
 
         // Should perform corrective ZADD with NX flag to fix the index
         expect(zaddSpy).toHaveBeenCalledWith(
@@ -1075,30 +1232,6 @@ describe("LightQ (lightq)", () => {
     });
 
     describe("parseCron", () => {
-      it("should parse cron string and cache the result", () => {
-        const pattern = "0 * * * *";
-        const now = Date.now();
-
-        // @ts-ignore Access private method & cache
-        const cache = scheduler.cronCache;
-        expect(cache.size).toBe(0);
-
-        // First call (miss)
-        // @ts-ignore
-        const result1 = scheduler.parseCron(pattern, now);
-        expect(result1).toBeInstanceOf(Cron);
-        // expect(constructorSpy).toHaveBeenCalledTimes(1); // Check constructor call (might be unreliable)
-        expect(cache.size).toBe(1);
-        expect(cache.has(`${pattern}_local`)).toBe(true);
-
-        // Second call (hit)
-        // @ts-ignore
-        const result2 = scheduler.parseCron(pattern, now);
-        expect(result2).toBe(result1); // Should return cached instance
-        //  expect(constructorSpy).toHaveBeenCalledTimes(1); // Constructor should NOT be called again
-        expect(cache.size).toBe(1);
-      });
-
       it("should handle timezone correctly", () => {
         const pattern = "0 9 * * 1-5"; // 9 AM on weekdays
         const tz = "America/New_York";
@@ -1109,13 +1242,6 @@ describe("LightQ (lightq)", () => {
 
         // @ts-ignore Access private method
         scheduler.parseCron(pattern, now, tz);
-
-        // Check if Cron constructor was called with timezone options
-        // This is hard to assert directly with spies on prototype.
-        // Instead, we rely on the fact that if TZ is passed, Croner handles it.
-        // We can check the cache key.
-        // @ts-ignore
-        expect(scheduler.cronCache.has(`${pattern}_${tz}`)).toBe(true);
       });
     });
   });
