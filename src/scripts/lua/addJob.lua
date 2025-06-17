@@ -35,14 +35,13 @@ local delayMs = tonumber(delayMs_str)     -- Convert for calculation and check
 
 local jobKey = jobsPrefix .. ':' .. jobId
 
-if redis.call("EXISTS", jobKey) == 1 then
+-- Atomically claim the job ID by setting the 'id' field only if the hash is new.
+if redis.call("HSETNX", jobKey, "id", jobId) == 0 then
   return 0 -- Job already exists
 end
 
--- Create the job hash with initial data
--- Pass numeric values as strings explicitly
+-- At this point, the job is claimed. Now set the rest of the data.
 redis.call("HMSET", jobKey,
-  "id", jobId,
   "name", name,
   "data", dataJson,
   "opts", optsJson,

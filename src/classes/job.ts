@@ -42,24 +42,19 @@ export class Job<TData = any, TResult = any, TName extends string = string> {
   }
 
   async updateProgress(progress: number | object): Promise<void> {
-    // NOTE: Progress updates are complex with atomicity.
-    // For simplicity, maybe store progress directly in the job hash?
-    // This isn't ideal for real-time updates but simplifies the core.
-    // Or implement a specific script like BullMQ.
-    console.warn("updateProgress not fully implemented in this simple version");
+    // Store progress in the job hash and emit a progress event
     const jobKey = `${this.queueKeys.jobs}:${this.id}`;
-    const currentData = (await this.queue.client.hgetall(jobKey)) as any; // TODO: Improve typing
-    if (currentData) {
-      currentData.progress = JSON.stringify(progress);
-      await this.queue.client.hset(
-        jobKey,
-        "progress",
-        JSON.stringify(progress),
-      );
-      // Maybe emit local event?
-    } else {
-      throw new Error(`Job ${this.id} not found for progress update.`);
-    }
+    const progressValue = JSON.stringify(progress);
+    
+    await this.queue.client.hset(jobKey, "progress", progressValue);
+    
+    // Publish progress update to a progress channel for real-time updates
+    const progressChannel = `${this.queueKeys.base}:progress`;
+    await this.queue.client.publish(progressChannel, JSON.stringify({
+      jobId: this.id,
+      progress: progress,
+      timestamp: Date.now()
+    }));
   }
 
   toData(): JobData<TData> {

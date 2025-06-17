@@ -178,6 +178,12 @@ Check the `example/index.ts` file for a comprehensive demonstration, including:
   - `opts?`: `JobOptions` for the created job (cannot include `jobId` or
     `delay`).
 
+## Security Considerations
+
+- **Job Data Sanitization**: While LightQ safely handles job data using parameterized Lua scripts to prevent injection attacks, be aware that job data is stored and retrieved as-is from Redis. If you plan to display job data in logs, UIs, or web interfaces, ensure you properly sanitize the data to prevent Cross-Site Scripting (XSS) vulnerabilities.
+
+- **Redis Security**: Ensure your Redis instance is properly secured with authentication, network restrictions, and encryption if handling sensitive data.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to open an issue or submit a pull

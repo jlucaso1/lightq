@@ -33,16 +33,19 @@ local newStacktraceJson = ARGV[5] -- Potentially store retry stack? Keep origina
 
 local jobKey = jobsPrefix .. ':' .. jobId
 
--- 2. Check if job data exists
-if redis.call("EXISTS", jobKey) == 0 then
-    return -2 -- Job data is missing, cannot retry
-end
-
--- 1. Remove from Active list
+-- 1. Remove from Active list first
 -- Use count -1 to remove only the last matching element (consistent with RPOPLPUSH)
 local removedCount = redis.call("LREM", activeKey, -1, jobId)
 if removedCount == 0 then
     return -3 -- Job not found in active list
+end
+
+-- 2. Check if job exists and get current attempts in one call
+-- Since we removed from active, we know the job should exist, but verify anyway
+local currentAttempts = redis.call("HGET", jobKey, "attemptsMade")
+if currentAttempts == false then
+    -- Job hash doesn't exist
+    return -2 -- Job data is missing, cannot retry
 end
 
 -- 3. Update Job Data: Increment attempts, clear finish/fail state

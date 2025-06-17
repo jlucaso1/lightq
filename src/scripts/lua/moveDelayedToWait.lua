@@ -25,17 +25,9 @@ local jobIds = redis.call("ZRANGEBYSCORE", delayedKey, "-inf", now_str, "LIMIT",
 
 local numJobIds = #jobIds
 if numJobIds > 0 then
-  -- Remove them from the delayed set (jobId is already a string)
-  for i = 1, numJobIds do
-      local jobId = jobIds[i]
-      redis.call("ZREM", delayedKey, jobId) -- jobId from ZRANGEBYSCORE is string
-  end
-
-  -- Add them to the wait list (jobId is already a string)
-  for i = 1, numJobIds do
-      local jobId = jobIds[i]
-      redis.call("LPUSH", waitKey, jobId) -- jobId from ZRANGEBYSCORE is string
-  end
+  -- Use unpack to pass all IDs at once for better performance
+  redis.call("ZREM", delayedKey, unpack(jobIds))
+  redis.call("LPUSH", waitKey, unpack(jobIds))
 
   -- TODO: Update delay field in job hashes to 0? (Optional optimization)
   -- TODO: Emit 'waiting' events via Pub/Sub?

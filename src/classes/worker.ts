@@ -8,13 +8,13 @@ import { RedisService } from "./base-service";
 export type Processor<
   TData = any,
   TResult = any,
-  TName extends string = string,
+  TName extends string = string
 > = (job: Job<TData, TResult, TName>) => Promise<TResult>;
 
 export class Worker<
   TData = any,
   TResult = any,
-  TName extends string = string,
+  TName extends string = string
 > extends RedisService<WorkerOptions> {
   readonly name: string;
   readonly bClient: RedisClient; // Blocking client
@@ -27,13 +27,12 @@ export class Worker<
   private jobsInFlight = new Map<string, Job<TData, TResult, TName>>(); // Track active jobs
   private lockRenewTimers = new Map<string, NodeJS.Timeout>();
   private mainLoopPromise: Promise<void> | null = null;
-  private workerId = randomUUID(); // Unique ID for this worker instance
   private activeJobPromises = new Set<Promise<any>>();
 
   constructor(
     name: string,
     processor: Processor<TData, TResult, TName>,
-    opts: WorkerOptions,
+    opts: WorkerOptions
   ) {
     super(opts);
     this.name = name;
@@ -48,7 +47,7 @@ export class Worker<
     this.run(); // Autorun by default (can be made optional)
   }
 
-  private async run(): Promise<void> {
+  private run(): void {
     if (this.running || this.closing) {
       return;
     }
@@ -60,7 +59,7 @@ export class Worker<
     while (this.running && !this.closing && !this.paused) {
       if (this.jobsInFlight.size < (this.opts.concurrency ?? 1)) {
         try {
-          const job = await this.acquireNextJob();
+          const job = await this.acquireNextJobBlocking();
           if (job) {
             const processingPromise = this.processJob(job)
               .catch((err) => {
@@ -72,8 +71,8 @@ export class Worker<
 
             this.activeJobPromises.add(processingPromise);
           } else {
-            // No job found, wait a bit before retrying to avoid busy-looping
-            await delay(1000); // Configurable delay?
+            // Small delay to prevent tight loops when blocking fails
+            await delay(100);
           }
         } catch (err) {
           if (
@@ -93,52 +92,62 @@ export class Worker<
     this.running = false;
   }
 
-  private async acquireNextJob(): Promise<Job<TData, TResult, TName> | null> {
-    // TODO: Incorporate blocking B(L|Z)MOVE or BRPOPLPUSH equivalent via Lua
-    // This simple version uses polling for delayed jobs and non-blocking moves.
-    // A production version NEEDS blocking for efficiency.
 
-    // 1. Check delayed jobs
-    const now = Date.now();
-    const movedFromDelayed = await this.scripts.moveDelayedToWait(
-      this.keys,
-      now,
-    );
-    if (movedFromDelayed > 0) {
-      this.emit("movedDelayed", movedFromDelayed); // Maybe a local event?
-    }
+  private async acquireNextJobBlocking(): Promise<Job<
+    TData,
+    TResult,
+    TName
+  > | null> {
+    const blockTimeout = 5;
+    try {
+      const jobId = await this.bClient.brpoplpush(
+        this.keys.wait,
+        this.keys.active,
+        blockTimeout,
+      );
 
-    // 2. Attempt to move from wait to active (needs Lua script)
-    const lockToken = randomUUID();
-    const lockDuration = this.opts.lockDuration!;
-    const result = await this.scripts.moveToActive(
-      this.keys,
-      lockToken,
-      lockDuration,
-    );
+      if (jobId) {
+        const lockToken = randomUUID();
+        const lockDuration = this.opts.lockDuration!;
 
-    if (result) {
-      const [jobId, rawJobData] = result;
-      if (jobId && rawJobData) {
-        // Got a job!
-        // Construct Job from raw data (needs parsing logic in Job class)
-        const job = Job.fromRedisHash<TData, TResult, TName>(
-          // Need a Queue-like object or pass necessary info
-          { client: this.client, keys: this.keys, name: this.name } as any,
-          rawJobData,
+        const result = await this.scripts.moveSpecificJobToActive(
+          this.keys,
+          jobId,
+          lockToken,
+          lockDuration,
         );
-        job.lockToken = lockToken;
-        job.lockedUntil = Date.now() + lockDuration;
 
-        this.jobsInFlight.set(job.id, job);
-        this.startLockRenewal(job);
-        this.emit("active", job);
-        return job;
+        if (result) {
+          const rawJobData = result;
+          if (rawJobData) {
+            const job = Job.fromRedisHash<TData, TResult, TName>(
+              { client: this.client, keys: this.keys, name: this.name } as any,
+              rawJobData,
+            );
+            job.lockToken = lockToken;
+            job.lockedUntil = Date.now() + lockDuration;
+
+            this.jobsInFlight.set(job.id, job);
+            this.startLockRenewal(job);
+            this.emit("active", job);
+            return job;
+          }
+        } else {
+          await this.client.lrem(this.keys.active, 1, jobId);
+          console.warn(
+            `Could not acquire lock for job ${jobId}; removed from active list to prevent stall.`,
+          );
+          return null;
+        }
       }
-    }
 
-    // No job found in wait
-    return null;
+      return null;
+    } catch (err: any) {
+      if (this.closing || err.message?.includes("Connection is closed")) {
+        return null;
+      }
+      throw err;
+    }
   }
 
   private async processJob(job: Job<TData, TResult, TName>): Promise<void> {
@@ -150,21 +159,19 @@ export class Worker<
       // This helps prevent attempting to complete a job whose lock was lost (and cleaned up)
       if (!this.jobsInFlight.has(job.id)) {
         console.warn(
-          `Job ${job.id} processing finished, but it was no longer tracked as active (lock likely lost). Skipping move to completed.`,
+          `Job ${job.id} processing finished, but it was no longer tracked as active (lock likely lost). Skipping move to completed.`
         );
         return; // Exit early, cleanup already happened or will happen
       }
 
-      const removeOpt = job.opts.removeOnComplete ??
-        this.opts.removeOnComplete ??
-        (this as any)._queue?.opts?.defaultJobOptions?.removeOnComplete ??
-        false;
+      const removeOpt =
+        job.opts.removeOnComplete ?? this.opts.removeOnComplete ?? false;
 
       const moveResult = await this.scripts.moveToCompleted(
         this.keys,
         job,
         result,
-        removeOpt ?? false,
+        removeOpt ?? false
       );
       if (moveResult === 0) {
         // Successfully moved
@@ -173,7 +180,7 @@ export class Worker<
       } else {
         // Failed to move (e.g., lock mismatch - code -1, or not in active list - code -2)
         console.error(
-          `Failed to move job ${job.id} to completed state (Redis script code: ${moveResult}). Lock may have been lost or job state inconsistent.`,
+          `Failed to move job ${job.id} to completed state (Redis script code: ${moveResult}). Lock may have been lost or job state inconsistent.`
         );
         // Even if move fails, we need to clean up the job locally
         this.cleanupJob(job.id);
@@ -181,16 +188,16 @@ export class Worker<
         this.emit(
           "error",
           new Error(
-            `Failed to move job ${job.id} to completed (Script Code: ${moveResult})`,
+            `Failed to move job ${job.id} to completed (Script Code: ${moveResult})`
           ),
-          job,
+          job
         );
       }
     } catch (err) {
       // Check if job is still valid before handling error
       if (!this.jobsInFlight.has(job.id)) {
         console.warn(
-          `Job ${job.id} processing failed, but it was no longer tracked as active (lock likely lost). Skipping move to failed/retry.`,
+          `Job ${job.id} processing failed, but it was no longer tracked as active (lock likely lost). Skipping move to failed/retry.`
         );
         return; // Exit early
       }
@@ -200,7 +207,7 @@ export class Worker<
 
   private async handleJobError(
     job: Job<TData, TResult, TName>,
-    err: Error,
+    err: Error
   ): Promise<void> {
     job.attemptsMade += 1;
     const opts = job.opts;
@@ -223,7 +230,7 @@ export class Worker<
             backoffDelay = opts.backoff.delay;
           } else if (opts.backoff.type === "exponential") {
             backoffDelay = Math.round(
-              opts.backoff.delay * Math.pow(2, job.attemptsMade - 1),
+              opts.backoff.delay * Math.pow(2, job.attemptsMade - 1)
             );
           }
         }
@@ -232,42 +239,40 @@ export class Worker<
           this.keys,
           job,
           backoffDelay,
-          err,
+          err
         );
         if (retryResult === 0) {
           this.emit("retrying", job, err);
           moveSuccessful = true;
         } else {
           console.error(
-            `Failed to move job ${job.id} for retry (Redis script code: ${retryResult}).`,
+            `Failed to move job ${job.id} for retry (Redis script code: ${retryResult}).`
           );
           // Don't emit retrying if move failed
         }
       } else {
-        const removeOnFail = job.opts.removeOnFail ??
-          this.opts.removeOnFail ??
-          (this as any)._queue?.opts?.defaultJobOptions?.removeOnFail ??
-          false;
+        const removeOnFail =
+          job.opts.removeOnFail ?? this.opts.removeOnFail ?? false;
         // Final failure: Move to failed
         const failedResult = await this.scripts.moveToFailed(
           this.keys,
           job,
           err,
-          removeOnFail ?? false,
+          removeOnFail ?? false
         );
         if (failedResult === 0) {
           // Optionally emit a 'finallyFailed' event here if needed?
           moveSuccessful = true;
         } else {
           console.error(
-            `Failed to move job ${job.id} to final failed state (Redis script code: ${failedResult}).`,
+            `Failed to move job ${job.id} to final failed state (Redis script code: ${failedResult}).`
           );
         }
       }
     } catch (redisError) {
       console.error(
         `Redis error during job failure handling for job ${job.id}:`,
-        redisError,
+        redisError
       );
       // Emit worker error?
       this.emit("error", redisError as Error, job);
@@ -285,7 +290,7 @@ export class Worker<
             this.keys,
             job.id,
             job.lockToken!,
-            this.opts.lockDuration!,
+            this.opts.lockDuration!
           );
           if (newLockedUntil > 0) {
             job.lockedUntil = newLockedUntil;
@@ -294,7 +299,7 @@ export class Worker<
           } else {
             // Lock lost or job gone
             console.warn(
-              `Failed to renew lock for job ${job.id}. It might have been stalled.`,
+              `Failed to renew lock for job ${job.id}. It might have been stalled.`
             );
             this.cleanupJob(job.id); // Stop processing this job
           }
@@ -338,14 +343,14 @@ export class Worker<
       const promisesToWaitFor = [...this.activeJobPromises];
       if (promisesToWaitFor.length > 0) {
         console.log(
-          `Waiting for ${promisesToWaitFor.length} active job promises to settle...`,
+          `Waiting for ${promisesToWaitFor.length} active job promises to settle...`
         );
         await Promise.allSettled(promisesToWaitFor);
         console.log("Active job promises settled.");
       }
     } else {
       console.log(
-        `Force closing worker: Skipping wait for ${this.jobsInFlight.size} jobs.`,
+        `Force closing worker: Skipping wait for ${this.jobsInFlight.size} jobs.`
       );
 
       this.activeJobPromises.clear();

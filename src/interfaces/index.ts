@@ -81,6 +81,7 @@ export interface SchedulerData extends JobTemplate {
   tz?: string;
   nextRun: number;
   lastRun?: number;
+  failureCount?: number; // Track consecutive failures for poison pill mechanism
 }
 
 /** Options for the JobScheduler instance */

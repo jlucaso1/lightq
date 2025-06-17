@@ -1,13 +1,11 @@
-// bench/benchmark.ts
-import { Queue as LightQQueue } from "@jlucaso/lightq";
-import type { JobOptions as LightQJobOptions } from "@jlucaso/lightq";
-import { Queue as BullMQQueue, Worker as BullMQWorker } from "bullmq";
+import { Queue as LightQQueue } from "../dist";
+import type { JobOptions as LightQJobOptions } from "../dist";
+import { Queue as BullMQQueue } from "bullmq";
 import Redis, { type RedisOptions } from "ioredis";
 import { bench, run, summary } from "mitata";
 import { heapStats } from "bun:jsc";
 import { randomUUID } from "node:crypto";
 
-// --- Configuration ---
 const redisConnectionOpts: RedisOptions = {
   host: process.env.REDIS_HOST || "127.0.0.1",
   port: process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT, 10) : 6379,
@@ -17,8 +15,8 @@ const redisConnectionOpts: RedisOptions = {
 
 const LIGHTQ_QUEUE_NAME = "lightq-benchmark-queue";
 const BULLMQ_QUEUE_NAME = "bullmq-benchmark-queue";
-const CONCURRENCY = 10; // Lower concurrency might be better for memory tests to reduce overlap
-const BULK_JOB_COUNT = 50; // Lower bulk count might also help isolate memory per-op
+const CONCURRENCY = 10;
+const BULK_JOB_COUNT = 50;
 
 console.log("--- Benchmark Setup ---");
 console.log(
@@ -35,14 +33,12 @@ console.log(
 );
 console.log("-----------------------\n");
 
-// --- Shared Job Data ---
 interface BenchmarkJobData {
   message: string;
   timestamp: number;
   id: string;
 }
 
-// --- Helper function for readable bytes ---
 function formatBytes(bytes: number, decimals = 2): string {
   if (bytes === 0) return "0 Bytes";
   const k = 1024;
@@ -52,8 +48,6 @@ function formatBytes(bytes: number, decimals = 2): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-// --- LightQ Setup ---
-// Initialize outside the run block to capture setup memory cost in initial stats
 const lightqRedisClient = new Redis(redisConnectionOpts);
 const lightqQueue = new LightQQueue<BenchmarkJobData, void>(LIGHTQ_QUEUE_NAME, {
   connection: lightqRedisClient,
@@ -64,7 +58,6 @@ const lightqQueue = new LightQQueue<BenchmarkJobData, void>(LIGHTQ_QUEUE_NAME, {
   },
 });
 
-// --- BullMQ Setup ---
 const bullmqRedisClient = new Redis(redisConnectionOpts);
 const bullmqQueue = new BullMQQueue<BenchmarkJobData, void>(BULLMQ_QUEUE_NAME, {
   connection: bullmqRedisClient,
@@ -74,8 +67,6 @@ const bullmqQueue = new BullMQQueue<BenchmarkJobData, void>(BULLMQ_QUEUE_NAME, {
     attempts: 1,
   },
 });
-
-// --- Define Benchmarks within Summary Blocks ---
 
 summary(() => {
   bench("[LightQ] add single job", async () => {
@@ -90,7 +81,7 @@ summary(() => {
       );
     }
     await Promise.all(promises);
-  }).gc("inner"); // Force GC before each inner iteration
+  }).gc("inner");
 
   bench("[BullMQ] add single job", async () => {
     const promises: Promise<any>[] = [];
@@ -104,7 +95,7 @@ summary(() => {
       );
     }
     await Promise.all(promises);
-  }).gc("inner"); // Force GC before each inner iteration
+  }).gc("inner");
 });
 
 summary(() => {
@@ -122,7 +113,7 @@ summary(() => {
       });
     }
     await lightqQueue.addBulk(jobs);
-  }).gc("inner"); // Force GC before each inner iteration
+  }).gc("inner");
 
   bench(`[BullMQ] add ${BULK_JOB_COUNT} bulk jobs`, async () => {
     const jobs = [];
@@ -138,10 +129,9 @@ summary(() => {
       });
     }
     await bullmqQueue.addBulk(jobs);
-  }).gc("inner"); // Force GC before each inner iteration
+  }).gc("inner");
 });
 
-// --- Run Benchmarks ---
 (async () => {
   let initialMemory: ReturnType<typeof heapStats> | null = null;
   let finalMemory: ReturnType<typeof heapStats> | null = null;
@@ -151,14 +141,13 @@ summary(() => {
     await Promise.all([
       new Promise<void>((resolve) => lightqQueue.once("ready", resolve)),
       new Promise<void>((resolve) =>
-        // @ts-ignore
-        bullmqQueue.waitUntilReady().then(resolve)
+        bullmqQueue.waitUntilReady().then(resolve as any)
       ),
     ]);
     console.log("Queues are ready.");
 
     console.log("Running initial GC...");
-    Bun.gc(true); // Force GC before initial measurement
+    Bun.gc(true);
     initialMemory = heapStats();
     console.log(
       `Initial Heap Stats: Size=${formatBytes(
@@ -171,12 +160,11 @@ summary(() => {
     console.log("\nStarting benchmarks (with inner GC enabled)...\n");
 
     await run({
-      // No need to force GC here in run options, .gc('inner') handles it per bench
       colors: true,
     });
 
     console.log("\nRunning final GC...");
-    Bun.gc(true); // Force GC before final measurement
+    Bun.gc(true);
     finalMemory = heapStats();
     console.log(
       `Final Heap Stats:   Size=${formatBytes(
@@ -201,7 +189,6 @@ summary(() => {
   } catch (error) {
     console.error("Benchmark run failed:", error);
   } finally {
-    // --- Cleanup ---
     console.log("\nClosing connections...");
     try {
       await Promise.allSettled([
@@ -214,7 +201,6 @@ summary(() => {
     } catch (closeError) {
       console.error("Error during cleanup:", closeError);
     }
-    // Disconnect forcefully if quit hangs or fails
     lightqRedisClient.disconnect();
     bullmqRedisClient.disconnect();
   }

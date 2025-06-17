@@ -7,6 +7,7 @@ import type {
 import type { Queue } from "./queue";
 import { Cron } from "croner";
 import { RedisService } from "./base-service";
+import { LuaScripts } from "../scripts/lua";
 
 // Helper to generate scheduler-specific keys
 function getSchedulerKeys(prefix: string, queueName: string) {
@@ -23,9 +24,11 @@ type SchedulerKeys = ReturnType<typeof getSchedulerKeys>;
 export class JobScheduler extends RedisService<JobSchedulerOptions> {
   private queue: Queue<any, any, any>;
   private keys: SchedulerKeys;
+  private scripts: LuaScripts;
   private checkTimer: NodeJS.Timeout | null = null;
   private running: boolean = false;
   private schedulerPrefix: string;
+  private workerId: string;
 
   // Cache for parsed cron expressions to avoid re-parsing
   private cronCache = new Map<string, Cron>();
@@ -35,8 +38,10 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
     this.queue = queue;
 
     this.schedulerPrefix = opts.schedulerPrefix ?? this.prefix;
+    this.workerId = `scheduler-${Math.random().toString(36).substring(2, 15)}`;
 
     this.keys = getSchedulerKeys(this.schedulerPrefix, queue.name);
+    this.scripts = new LuaScripts(this.client);
   }
 
   /**
@@ -48,7 +53,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
   async upsertJobScheduler<TData = any, TName extends string = string>(
     schedulerId: string,
     repeat: SchedulerRepeatOptions,
-    template: JobTemplate<TData, TName>,
+    template: JobTemplate<TData, TName>
   ): Promise<void> {
     if (this.closing) throw new Error("Scheduler is closing");
     if (!schedulerId) throw new Error("Scheduler ID cannot be empty");
@@ -76,7 +81,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
     } else if (repeat.every) {
       if (typeof repeat.every !== "number" || repeat.every <= 0) {
         throw new Error(
-          "Invalid 'every' value: must be a positive number (milliseconds)",
+          "Invalid 'every' value: must be a positive number (milliseconds)"
         );
       }
       type = "every";
@@ -85,13 +90,13 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
       nextRun = now + value;
     } else {
       throw new Error(
-        "Invalid repeat options: must provide 'pattern' or 'every'",
+        "Invalid repeat options: must provide 'pattern' or 'every'"
       );
     }
 
     if (!nextRun) {
       console.warn(
-        `Scheduler ${schedulerId} has no nextRun calculated. Skipping upsert.`,
+        `Scheduler ${schedulerId} has no nextRun calculated. Skipping upsert.`
       );
       return;
     }
@@ -119,6 +124,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         opts: JSON.stringify(schedulerData.opts ?? {}), // Ensure opts are stored as JSON string
         nextRun: nextRun.toString(), // Store numbers as strings
         value: value.toString(), // Store value as string
+        failureCount: "0", // Initialize failure count
       });
 
       multi.zadd(this.keys.index, nextRun, schedulerId);
@@ -130,7 +136,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
     } catch (err: any) {
       this.emit(
         "error",
-        `Failed to upsert scheduler ${schedulerId}: ${err.message}`,
+        `Failed to upsert scheduler ${schedulerId}: ${err.message}`
       );
       throw err; // Re-throw
     }
@@ -164,7 +170,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
     } catch (err: any) {
       this.emit(
         "error",
-        `Failed to remove scheduler ${schedulerId}: ${err.message}`,
+        `Failed to remove scheduler ${schedulerId}: ${err.message}`
       );
       throw err; // Re-throw
     }
@@ -179,7 +185,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
     this.emit("start");
     this._scheduleNextCheck();
     console.log(
-      `JobScheduler for queue "${this.queue.name}" started. Checking every ${this.opts.checkInterval}ms.`,
+      `JobScheduler for queue "${this.queue.name}" started. Checking every ${this.opts.checkInterval}ms.`
     );
   }
 
@@ -222,47 +228,95 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
     if (!this.running || this.closing) return;
 
     const now = Date.now();
-    const limit = 50; // Process up to 50 due schedulers per check cycle
+    const limit = 50;
 
-    try {
-      // Find schedulers due to run (nextRun <= now)
-      const results = await this.client.zrangebyscore(
-        this.keys.index,
-        "-inf", // Min score
-        now, // Max score (current time)
-        "LIMIT",
-        "0",
-        limit.toString(),
-      );
+    const checkDelayedJobs = async () => {
+      try {
+        const movedCount = await this.scripts.moveDelayedToWait(
+          this.queue.keys,
+          now,
+          limit
+        );
+        if (movedCount > 0) {
+          // Emit event on the queue so users can listen for it
+          this.queue.emit("movedDelayed", movedCount);
+        }
+      } catch (err: any) {
+        if (err.message !== "Connection is closed.") {
+          this.emit(
+            "error",
+            `Scheduler failed to check delayed jobs: ${err.message}`
+          );
+        }
+      }
+    };
 
-      if (results.length === 0) {
-        return; // Nothing to do
-      }
+    const checkScheduledJobs = async () => {
+      try {
+        const results = await this.client.zrangebyscore(
+          this.keys.index,
+          "-inf",
+          now,
+          "LIMIT",
+          "0",
+          limit.toString()
+        );
 
-      // --- Simple processing loop (potential for race conditions in distributed env) ---
-      // A Lua script would be needed for true atomicity if multiple schedulers run
-      for (const schedulerId of results) {
-        if (!this.running || this.closing) break; // Stop if scheduler stopped mid-loop
-        await this._processSingleScheduler(schedulerId, now);
+        if (results.length === 0) {
+          return;
+        }
+
+        const processingPromises = results.map((schedulerId) => {
+          if (!this.running || this.closing) {
+            return Promise.resolve();
+          }
+          return this._processSingleScheduler(schedulerId, now);
+        });
+
+        await Promise.all(processingPromises);
+      } catch (err: any) {
+        if (err.message !== "Connection is closed.") {
+          this.emit("error", `Scheduler check failed: ${err.message}`);
+        }
       }
-      // --- End Simple processing loop ---
-    } catch (err: any) {
-      // Handle Redis errors during the check
-      if (err.message !== "Connection is closed.") {
-        this.emit("error", `Scheduler check failed: ${err.message}`);
-      }
-    }
+    };
+
+    await Promise.all([checkDelayedJobs(), checkScheduledJobs()]);
   }
 
   // Processes a single scheduler identified by ID
   private async _processSingleScheduler(
     schedulerId: string,
-    now: number,
+    now: number
   ): Promise<void> {
+    // Early exit check in case the scheduler was stopped after promise creation
+    if (!this.running || this.closing) {
+      return;
+    }
+
     const schedulerKey = `${this.keys.hashPrefix}${schedulerId}`;
     let schedulerData: Record<string, string> | null = null;
     let parsedData: SchedulerData | null = null;
     let newNextRun: number | null = null;
+
+    // Implement distributed locking to prevent race conditions with multiple scheduler instances
+    const lockKey = `${this.keys.base}:lock:${schedulerId}`;
+    const lockValue = `${this.workerId}-${Date.now()}`; // Unique lock value
+    const lockDuration = 10; // 10 seconds lock duration
+
+    // Try to acquire the lock
+    const lockAcquired = await this.client.set(
+      lockKey,
+      lockValue,
+      "EX",
+      lockDuration,
+      "NX"
+    );
+
+    if (lockAcquired !== "OK") {
+      // Another scheduler process is handling this scheduler
+      return;
+    }
 
     try {
       // 1. Get Scheduler Data
@@ -271,7 +325,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         // Scheduler was likely removed between ZRANGE and HGETALL
         await this.client.zrem(this.keys.index, schedulerId); // Clean up index just in case
         console.warn(
-          `Scheduler data for ${schedulerId} not found, removing from index.`,
+          `Scheduler data for ${schedulerId} not found, removing from index.`
         );
         return;
       }
@@ -285,7 +339,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
           this.keys.index,
           "NX",
           currentNextRun,
-          schedulerId,
+          schedulerId
         ); // Update score if it doesn't exist
         return;
       }
@@ -303,12 +357,12 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
           const interval = this.parseCron(
             parsedData.value as string,
             lastRun,
-            parsedData.tz,
+            parsedData.tz
           );
           newNextRun = interval.nextRun()?.getTime() || null;
         } catch (err: any) {
           throw new Error(
-            `Invalid cron pattern (${parsedData.value}): ${err.message}`,
+            `Invalid cron pattern (${parsedData.value}): ${err.message}`
           );
         }
       } else {
@@ -318,7 +372,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
 
       if (!newNextRun) {
         console.warn(
-          `Scheduler ${schedulerId} has no new nextRun calculated. Skipping job addition.`,
+          `Scheduler ${schedulerId} has no new nextRun calculated. Skipping job addition.`
         );
         return;
       }
@@ -351,53 +405,102 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
         newNextRun.toString(),
         "lastRun",
         lastRun.toString(),
+        "failureCount",
+        "0"
       );
       multi.zadd(this.keys.index, newNextRun, schedulerId); // Update score in ZSET
       await multi.exec();
     } catch (err: any) {
       this.emit(
         "error",
-        `Failed to process scheduler ${schedulerId}: ${err.message}`,
+        `Failed to process scheduler ${schedulerId}: ${err.message}`
       );
-      // Decide how to handle failures:
-      // - Remove the scheduler?
-      // - Mark it as failed?
-      // - Retry later? (Requires more complex state)
-      // For now, we log the error. The scheduler might be picked up again if its
-      // nextRun time doesn't get updated, potentially causing duplicate jobs if the
-      // job add succeeded but the state update failed. Atomicity (Lua) is key here.
-      // If nextRun *was* calculated, try to update just that to avoid tight loop.
-      if (newNextRun && parsedData) {
+
+      // Implement poison pill mechanism to prevent stuck schedulers
+      const currentFailureCount = (parsedData?.failureCount || 0) + 1;
+      const maxFailureCount = 5; // Maximum consecutive failures before disabling
+
+      if (currentFailureCount >= maxFailureCount) {
+        // Disable the scheduler by setting nextRun to a very distant future
+        const disabledNextRun = now + 365 * 24 * 60 * 60 * 1000; // 1 year from now
         try {
-          const recoveryNextRun = Math.max(
-            newNextRun,
-            now + (this.opts.checkInterval || 5000),
-          ); // Push it at least one interval out
           await this.client
             .multi()
-            .hset(schedulerKey, "nextRun", recoveryNextRun.toString())
-            .zadd(this.keys.index, recoveryNextRun, schedulerId)
+            .hset(
+              schedulerKey,
+              "nextRun",
+              disabledNextRun.toString(),
+              "failureCount",
+              currentFailureCount.toString()
+            )
+            .zadd(this.keys.index, disabledNextRun, schedulerId)
             .exec();
-          console.warn(
-            `Scheduler ${schedulerId} processing error, pushed nextRun forward.`,
+          this.emit(
+            "error",
+            `CRITICAL: Scheduler ${schedulerId} disabled after ${maxFailureCount} consecutive failures. Manual intervention required.`
           );
-        } catch (recoveryErr: any) {
           console.error(
-            `Failed recovery update for scheduler ${schedulerId}: ${recoveryErr.message}`,
+            `CRITICAL: Scheduler ${schedulerId} has been automatically disabled after ${maxFailureCount} consecutive failures. ` +
+              `It has been scheduled to run again in 1 year. Manual intervention is required.`
           );
-          // Consider removing from index if recovery fails to prevent infinite loop
-          await this.client.zrem(this.keys.index, schedulerId);
+        } catch (disableErr: any) {
           console.error(
-            `Removed scheduler ${schedulerId} from index due to recovery failure.`,
+            `CRITICAL: Failed to disable problematic scheduler ${schedulerId}: ${disableErr.message}`
           );
         }
+      } else {
+        // Improved recovery strategy: less destructive approach
+        // If nextRun was calculated, try to update just that to avoid tight loop.
+        if (newNextRun && parsedData) {
+          try {
+            const recoveryNextRun = Math.max(
+              newNextRun,
+              now + (this.opts.checkInterval || 5000)
+            ); // Push it at least one interval out
+            await this.client
+              .multi()
+              .hset(
+                schedulerKey,
+                "nextRun",
+                recoveryNextRun.toString(),
+                "failureCount",
+                currentFailureCount.toString()
+              )
+              .zadd(this.keys.index, recoveryNextRun, schedulerId)
+              .exec();
+            console.warn(
+              `Scheduler ${schedulerId} processing error (failure ${currentFailureCount}/${maxFailureCount}), pushed nextRun forward.`
+            );
+          } catch (recoveryErr: any) {
+            console.error(
+              `Failed recovery update for scheduler ${schedulerId}: ${recoveryErr.message}`
+            );
+            // Instead of removing the scheduler (lossy), just log the error
+            // The scheduler will be picked up again on the next checkInterval
+            console.warn(
+              `Scheduler ${schedulerId} will be retried on next check interval.`
+            );
+          }
+        }
+      }
+    } finally {
+      // Always release the lock, even if processing fails
+      try {
+        const currentLockValue = await this.client.get(lockKey);
+        if (currentLockValue === lockValue) {
+          await this.client.del(lockKey);
+        }
+      } catch (lockErr: any) {
+        console.warn(
+          `Failed to release lock for scheduler ${schedulerId}: ${lockErr.message}`
+        );
       }
     }
   }
 
   // Helper to parse scheduler data stored as strings in Redis hash
   private parseSchedulerData(
-    hashData: Record<string, string>,
+    hashData: Record<string, string>
   ): SchedulerData | null {
     try {
       const data: Partial<SchedulerData> = {};
@@ -408,6 +511,9 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
       data.lastRun = hashData.lastRun
         ? parseInt(hashData.lastRun, 10)
         : undefined;
+      data.failureCount = hashData.failureCount
+        ? parseInt(hashData.failureCount, 10)
+        : 0;
       data.name = hashData.name;
       data.data = JSON.parse(hashData.data || "{}");
       data.opts = JSON.parse(hashData.opts || "{}");
@@ -441,7 +547,7 @@ export class JobScheduler extends RedisService<JobSchedulerOptions> {
   private parseCron(
     pattern: string,
     currentDate: number | Date,
-    tz?: string,
+    tz?: string
   ): Cron {
     const cacheKey = `${pattern}_${tz || "local"}`;
     if (this.cronCache.has(cacheKey)) {

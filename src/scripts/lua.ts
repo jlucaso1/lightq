@@ -18,11 +18,6 @@ export class LuaScripts {
       lua: loadLuaScriptContent("addJob"),
     });
 
-    // moveToActive
-    this.client.defineCommand("moveToActive", {
-      numberOfKeys: 3,
-      lua: loadLuaScriptContent("moveToActive"),
-    });
 
     // moveToCompleted
     this.client.defineCommand("moveToCompleted", {
@@ -53,6 +48,12 @@ export class LuaScripts {
       numberOfKeys: 1,
       lua: loadLuaScriptContent("extendLock"),
     });
+
+    // moveSpecificJobToActive
+    this.client.defineCommand("moveSpecificJobToActive", {
+      numberOfKeys: 2,
+      lua: loadLuaScriptContent("moveSpecificJobToActive"),
+    });
   }
 
   async addJob(
@@ -77,31 +78,6 @@ export class LuaScripts {
     return command.addJob(keys.jobs, keys.wait, keys.delayed, ...args);
   }
 
-  async moveToActive(
-    keys: QueueKeys,
-    lockToken: string,
-    lockDuration: number,
-  ): Promise<[string, Record<string, string>] | null> {
-    const now = Date.now();
-    const args = [lockToken, lockDuration.toString(), now.toString()];
-    // @ts-ignore
-    const result = await this.client.moveToActive(
-      keys.wait,
-      keys.active,
-      keys.jobs,
-      ...args,
-    );
-    if (result) {
-      const jobId = result[0];
-      const jobDataArr = result[1];
-      const jobDataMap: Record<string, string> = {};
-      for (let i = 0; i < jobDataArr.length; i += 2) {
-        jobDataMap[jobDataArr[i]] = jobDataArr[i + 1];
-      }
-      return [jobId, jobDataMap];
-    }
-    return null;
-  }
 
   async moveToCompleted(
     keys: QueueKeys,
@@ -207,5 +183,29 @@ export class LuaScripts {
     const args = [jobId, token, duration.toString(), now.toString()];
     // @ts-ignore
     return this.client.extendLock(keys.jobs, ...args);
+  }
+
+  async moveSpecificJobToActive(
+    keys: QueueKeys,
+    jobId: string,
+    lockToken: string,
+    lockDuration: number,
+  ): Promise<Record<string, string> | null> {
+    const now = Date.now();
+    const args = [jobId, lockToken, lockDuration.toString(), now.toString()];
+    // @ts-ignore
+    const result = await this.client.moveSpecificJobToActive(
+      keys.active,
+      keys.jobs,
+      ...args,
+    );
+    if (result) {
+      const jobDataMap: Record<string, string> = {};
+      for (let i = 0; i < result.length; i += 2) {
+        jobDataMap[result[i]] = result[i + 1];
+      }
+      return jobDataMap;
+    }
+    return null;
   }
 }
