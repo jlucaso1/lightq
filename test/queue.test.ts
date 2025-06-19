@@ -13,10 +13,10 @@ import IORedis, { type Redis } from "ioredis";
 import {
   Job,
   JobScheduler,
-  JobTemplate,
+  type JobTemplate,
   Queue,
-  SchedulerRepeatOptions,
-  Worker,
+  type SchedulerRepeatOptions,
+  type Worker,
 } from "../src";
 import { testConnectionOpts } from "./test.utils";
 import { delay } from "../src/utils";
@@ -288,7 +288,7 @@ describe("LightQ (lightq)", () => {
       queuesToClose.push(sharedQueue);
 
       await sharedQueue.add("job-before-close", { d: 1 });
-      let statusBefore = connectionStatusClient.status;
+      const statusBefore = connectionStatusClient.status;
       expect(statusBefore).toBeOneOf(["connecting", "connect", "ready"]);
 
       await sharedQueue.close();
@@ -304,45 +304,6 @@ describe("LightQ (lightq)", () => {
         (q) => q.client !== connectionStatusClient
       );
       await connectionStatusClient.quit().catch(() => {});
-    });
-
-    it("should execute a raw script command via executeScript", async () => {
-      const queue = createQueue(testQueueName);
-      const script = "return redis.call('SET', KEYS[1], ARGV[1])";
-      const key = `${queue.keys.base}:exec-test`;
-      const value = "hello world";
-      queue.client.defineCommand("testExecScript", {
-        // <-- Command 1
-        numberOfKeys: 1,
-        lua: script,
-      });
-
-      // @ts-ignore - Accessing potentially private/internal method for testing
-      let result = await queue.executeScript("testExecScript", [key], [value]);
-      expect(result).toBe("OK");
-      expect(await redisClient.get(key)).toBe(value);
-
-      const key2 = `${queue.keys.base}:exec-test-pipe`;
-      const value2 = "pipeline test";
-
-      queue.client.defineCommand("testExecScriptPipe", {
-        numberOfKeys: 1,
-        lua: script,
-      });
-      const pipeline = queue.client.pipeline();
-
-      // @ts-ignore
-      queue.executeScript("testExecScriptPipe", [key2], [value2], pipeline);
-      const execResult = await pipeline.exec();
-
-      expect(execResult).toHaveLength(1);
-      expect(execResult).toBeArray();
-      expect(execResult![0]).toBeArray();
-      expect(execResult![0]![0]).toBeNull();
-      expect(execResult![0]![1]).toBe("OK");
-      expect(await redisClient.get(key2)).toBe(value2);
-
-      await redisClient.del(key, key2);
     });
 
     describe("Scheduler Integration", () => {

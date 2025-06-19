@@ -503,7 +503,7 @@ export class JobScheduler<
         !data.type ||
         !data.value ||
         !data.name ||
-        isNaN(data.nextRun)
+        Number.isNaN(data.nextRun)
       ) {
         return null;
       }
@@ -517,7 +517,7 @@ export class JobScheduler<
 
   private parseCron(
     pattern: string,
-    currentDate: number | Date,
+    _currentDate: number | Date,
     tz?: string
   ): Cron {
     const interval = new Cron(pattern, { timezone: tz });

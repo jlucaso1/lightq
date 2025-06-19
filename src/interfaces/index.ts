@@ -1,4 +1,4 @@
-import { Cluster, Redis, type RedisOptions } from "ioredis";
+import type { Cluster, Redis, RedisOptions } from "ioredis";
 
 export type RedisClient = Redis | Cluster;
 

@@ -1,6 +1,6 @@
 import type { JobData, RedisClient } from "../interfaces";
-import { Pipeline } from "ioredis";
-import { Job } from "../classes/job";
+import type { ChainableCommander } from "ioredis";
+import type { Job } from "../classes/job";
 import type { QueueKeys } from "../utils";
 import { loadLuaScriptContent } from "../macros/loadLuaScript.ts" with { type: "macro" };
 
@@ -57,7 +57,7 @@ export class LuaScripts {
   async addJob<TData>(
     keys: QueueKeys,
     jobData: JobData<TData>,
-    pipeline?: Pipeline,
+    pipeline?: ChainableCommander,
   ): Promise<string> {
     const command = pipeline || this.client;
     const optsJson = JSON.stringify(jobData.opts);
@@ -88,7 +88,7 @@ export class LuaScripts {
       ? removeOnComplete.toString()
       : String(removeOnComplete);
     const rvJson = JSON.stringify(returnValue ?? null);
-    const args = [job.id, rvJson, removeOption, now.toString(), job.lockToken!];
+    const args = [job.id, rvJson, removeOption, now.toString(), job.lockToken];
     // @ts-ignore
     return this.client.moveToCompleted(
       keys.active,
@@ -119,7 +119,7 @@ export class LuaScripts {
       stacktrace,
       removeOption,
       now.toString(),
-      job.lockToken!,
+      job.lockToken,
       finalAttemptsMade.toString(),
     ];
     // @ts-ignore

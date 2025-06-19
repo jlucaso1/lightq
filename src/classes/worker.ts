@@ -34,7 +34,7 @@ export class Worker<
   private jobsInFlight = new Map<string, Job<TData, TResult, TName>>();
   private lockRenewTimers = new Map<string, NodeJS.Timeout>();
   private mainLoopPromise: Promise<void> | null = null;
-  private activeJobPromises = new Set<Promise<any>>();
+  private activeJobPromises = new Set<Promise<void>>();
 
   constructor(
     name: string,
@@ -217,8 +217,6 @@ export class Worker<
 
     this.emit("failed", job, err);
 
-    let moveSuccessful = false;
-
     try {
       if (job.attemptsMade < maxAttempts) {
         let backoffDelay = 0;
@@ -229,7 +227,7 @@ export class Worker<
             backoffDelay = opts.backoff.delay;
           } else if (opts.backoff.type === "exponential") {
             backoffDelay = Math.round(
-              opts.backoff.delay * Math.pow(2, job.attemptsMade - 1)
+              opts.backoff.delay * 2 ** (job.attemptsMade - 1)
             );
           }
         }
@@ -241,7 +239,6 @@ export class Worker<
         );
         if (retryResult === 0) {
           this.emit("retrying", job, err);
-          moveSuccessful = true;
         } else {
           console.error(
             `Failed to move job ${job.id} for retry (Redis script code: ${retryResult}).`
@@ -257,7 +254,6 @@ export class Worker<
           removeOnFail ?? false
         );
         if (failedResult === 0) {
-          moveSuccessful = true;
         } else {
           console.error(
             `Failed to move job ${job.id} to final failed state (Redis script code: ${failedResult}).`
@@ -305,7 +301,7 @@ export class Worker<
     this.lockRenewTimers.set(job.id, timer);
   }
 
-  private cleanupJob(jobId: string, error?: Error): void {
+  private cleanupJob(jobId: string, _error?: Error): void {
     const timer = this.lockRenewTimers.get(jobId);
     if (timer) {
       clearTimeout(timer);
@@ -322,7 +318,7 @@ export class Worker<
     if (this.mainLoopPromise) {
       try {
         await Promise.race([this.mainLoopPromise, delay(force ? 50 : 500)]);
-      } catch (e) {}
+      } catch (_e) {}
     }
     this.mainLoopPromise = null;
 

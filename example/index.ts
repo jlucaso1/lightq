@@ -1,4 +1,4 @@
-import { Job, Queue, Worker } from "../src"; // Use '@jlucaso/lightq' if installed as a package
+import { type Job, Queue, Worker } from "../src"; // Use '@jlucaso/lightq' if installed as a package
 import process from "node:process";
 
 // --- 1. Configure Redis Connection ---

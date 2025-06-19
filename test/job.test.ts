@@ -10,7 +10,7 @@ import {
   spyOn,
 } from "bun:test";
 import IORedis, { type Redis } from "ioredis";
-import { Job, type JobData, JobScheduler, Queue, Worker } from "../src";
+import { Job, type JobData, type JobScheduler, Queue, type Worker } from "../src";
 import { testConnectionOpts } from "./test.utils";
 
 describe("LightQ (lightq)", () => {

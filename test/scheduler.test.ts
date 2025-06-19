@@ -11,13 +11,13 @@ import {
 } from "bun:test";
 import IORedis, { Pipeline, type Redis } from "ioredis";
 import {
-  Job,
+  type Job,
   JobScheduler,
-  JobTemplate,
+  type JobTemplate,
   Queue,
-  RedisClient,
-  SchedulerRepeatOptions,
-  Worker,
+  type RedisClient,
+  type SchedulerRepeatOptions,
+  type Worker,
 } from "../src";
 import { Cron } from "croner";
 import { testConnectionOpts } from "./test.utils";

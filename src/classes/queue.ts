@@ -10,8 +10,6 @@ import { getQueueKeys, type QueueKeys } from "../utils";
 import { LuaScripts } from "../scripts/lua";
 import { randomUUID } from "node:crypto";
 import { Job } from "./job";
-import { Pipeline } from "ioredis";
-import { Buffer } from "node:buffer";
 import { JobScheduler } from "./scheduler";
 import { RedisService } from "./base-service";
 import { JobProgressUpdater } from "./progress-updater";
@@ -106,9 +104,7 @@ export class Queue<
 
     const jobInstances: Job<TData, TResult, TName>[] = [];
     const pipeline = this.client.pipeline();
-    if (!(pipeline instanceof Pipeline)) {
-      throw new Error("Pipeline is not an instance of Pipeline");
-    }
+
     const timestamp = Date.now();
 
     for (const jobDef of jobs) {
@@ -188,17 +184,6 @@ export class Queue<
     if (this.scheduler) {
       await this.scheduler.close(force);
     }
-  }
-
-  async executeScript(
-    scriptName: string,
-    keys: string[],
-    args: (string | number | Buffer)[],
-    pipeline?: Pipeline
-  ): Promise<any> {
-    const command = pipeline || this.client;
-
-    return (command as any)[scriptName]?.(...keys, ...args);
   }
 
   private getScheduler(): JobScheduler<TData, TResult, TName> {
